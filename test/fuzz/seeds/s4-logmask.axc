@@ -1,0 +1,68 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// s4 — Log masking and severity report.
+// Masks IPs and first auth token per line, normalizes severity,
+// classifies by file extension or last path segment, reports counts.
+
+var log = "2024-03-15 09:22:01 [info] 10.0.1.55 GET /api/users?token=abc123def 200\n"
++ "2024-03-15 09:22:03 [warn] 192.168.1.100 POST /uploads/report.pdf?token=xYz78 201\n"
++ "2024-03-15 09:22:05 [error] 10.0.2.77 GET /api/auth?token=secret99 403\n"
++ "2024-03-15 09:22:07 [debug] 172.16.0.5 PUT /data/export.csv?token=none 200\n"
++ "2024-03-15 09:22:09 [info] 10.0.3.12 DELETE /api/logs?token=passw0rd 500\n"
++ "2024-03-15 09:22:11 [warn] 192.168.2.200 PATCH /docs/readme.md?token=change 200\n"
++ "2024-03-15 09:22:13 [error] 10.0.4.88 GET /api/config?token=sec123 502\n"
++ "2024-03-15 09:22:15 [info] 172.16.1.99 GET /api/status 200";
+
+// Validate patterns upfront
+if (!$regex_valid("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+")) return "bad IP pattern";
+
+var lines = $str_split(log, "\n");
+var sevCounts = map{};
+var catCounts = map{};
+var masked = [];
+
+for (var line : lines) {
+    // Extract severity from original, normalize to uppercase
+    var groups = $regex_group("\\[([a-zA-Z]+)\\]", line);
+    if ($vec_size(groups) > 0) {
+        var sev = $str_upper(groups[0]);
+        sevCounts[sev] = $map_get(sevCounts, sev, 0) + 1;
+    }
+    // Extract clean path (stop at ? or space) via group_all
+    var paths = $regex_group_all("(/[^ ?]+)", line);
+    if ($vec_size(paths) > 0) {
+        var p = paths[0][0];
+        // Classify: known extension → file; otherwise last path segment
+        var isFile = $str_ends(p, ".pdf") || $str_ends(p, ".csv") || $str_ends(p, ".md");
+        if (isFile) {
+            var dot = $str_rfind(p, ".");
+            var ext = $str_right(p, $str_size(p) - dot);
+            catCounts[ext] = $map_get(catCounts, ext, 0) + 1;
+        } else {
+            var slash = $str_rfind(p, "/");
+            if (slash >= 0) {
+                var seg = $str_right(p, $str_size(p) - slash - 1);
+                catCounts[seg] = $map_get(catCounts, seg, 0) + 1;
+            }
+        }
+    }
+    // Mask IPs globally, mask first token only
+    var m = $regex_replace_all("[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+", line, "<IP>");
+    m = $regex_replace("token=[a-zA-Z0-9]+", m, "token=***");
+    $vec_push(masked, m);
+}
+
+var out = ["=== Severity Counts ==="];
+for (var k : $map_keys(sevCounts)) {
+    $vec_push(out, k + ": " + string($map_get(sevCounts, k)));
+}
+$vec_push(out, "");
+$vec_push(out, "=== By Extension / Path Segment ===");
+for (var k : $map_keys(catCounts)) {
+    $vec_push(out, k + ": " + string($map_get(catCounts, k)));
+}
+$vec_push(out, "");
+$vec_push(out, "=== Masked Sample ===");
+$vec_push(out, masked[0]);
+return out;

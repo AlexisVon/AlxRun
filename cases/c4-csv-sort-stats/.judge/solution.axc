@@ -1,0 +1,26 @@
+var text = $fs_read("cases/c4-csv-sort-stats/data/hosts.csv");
+var rows = [];
+for (var line : $str_split(text, "\n")) {
+    var l = $str_trim(line);
+    if ($str_size(l) == 0 || $str_starts(l, "host")) { continue; }
+    var f = $str_split(l, ",");
+    $vec_push(rows, [float(f[1]), f[0]]);
+}
+for (var i = 0; i < $vec_size(rows); ++i) {
+    var best = i;
+    for (var j = i + 1; j < $vec_size(rows); ++j) {
+        if (rows[j][0] > rows[best][0]) { best = j; }
+    }
+    var tmp = rows[i];
+    rows[i] = rows[best];
+    rows[best] = tmp;
+}
+var out = [];
+for (var i = 0; i < 3; ++i) { $vec_push(out, rows[i][1] + " " + string(rows[i][0], 2)); }
+var sum = 0.0;
+for (var r : rows) { sum = sum + r[0]; }
+var mean = sum / $vec_size(rows);
+var ss = 0.0;
+for (var r : rows) { ss = ss + (r[0] - mean) * (r[0] - mean); }
+$vec_push(out, string(mean, 2) + " " + string($math_sqrt(ss / $vec_size(rows)), 2));
+return out;

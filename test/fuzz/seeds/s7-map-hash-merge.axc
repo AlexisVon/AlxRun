@@ -1,0 +1,42 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// s7 — Merge two price lists, fingerprint the report, emit compact JSON.
+// Batch 1: morning sales
+var p1 = map{"apple": 3, "banana": 5, "cherry": 2, "date": 8};
+// Batch 2: afternoon sales (overlaps apple/cherry, adds elderberry)
+var p2 = map{"apple": 4, "cherry": 1, "elderberry": 12, "fig": 7};
+// Merge with additive combining (map_merge overwrites, so build manually)
+var merged = map{};
+for (var k : $map_keys(p1)) { merged[k] = p1[k]; }
+for (var k : $map_keys(p2)) { merged[k] = $map_get(merged, k, 0) + p2[k]; }
+// Compute global stats
+var vals = $map_values(merged);
+var total = 0.0; var mx = 0.0; var mn = 999999.0;
+for (var v : vals) {
+    total += float(v);
+    mx = $math_max(mx, float(v));
+    mn = $math_min(mn, float(v));
+}
+// $map_merge: stamp item count into merged map (after stats to keep vals clean)
+$map_merge(merged, map{"_items": vals[null]});
+// Build report lines
+var lines = ["=== Merged Price Table ==="];
+for (var k : $map_keys(merged)) {
+    $vec_push(lines, k + " = " + string(merged[k]));
+}
+var avg = total / float(vals[null]);
+$vec_push(lines, "items=" + string(vals[null]) + " total=" + string(total, 1)
+    + " avg=" + string(avg, 2) + " max=" + string(mx, 0) + " min=" + string(mn, 0));
+// Fingerprint the report text
+var text = $str_join(lines, "\n");
+var h = $hash_sha256(text);
+$vec_push(lines, "sha256=" + $str_left(h, 16) + "...");
+// The digest and the codec both leave in lower case, so they compare directly
+var hb = bytes(h, "HEX");
+$vec_push(lines, "hash_hex_ok=" + string(string(hb, "hex") == h));
+// Pretty JSON of merged table
+$vec_push(lines, $json_str(merged));
+// Compact JSON of merged table
+$vec_push(lines, $json_compact(merged));
+return lines;

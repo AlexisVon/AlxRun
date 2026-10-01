@@ -1,0 +1,6 @@
+var words = $str_split($str_lower("The quick Brown fox JUMPS over the lazy dog the FOX"), " ");
+var uniq = map{};
+for (var w : words) { uniq[w] = 1; }
+var out = $map_keys(uniq);
+$vec_sort(out);
+return out;

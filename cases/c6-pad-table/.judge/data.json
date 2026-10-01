@@ -1,0 +1,1 @@
+{"cfg": "region=us-east\nowner=platform\nretention_days=30\nalert_to=oncall@example.com"}

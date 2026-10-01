@@ -1,0 +1,34 @@
+# Build
+build/
+build-fuzz/
+build-platform/
+bin/
+
+# AlxLib vendored binaries (include/ and doc/ are tracked, binaries are not)
+lib/alxlib/bin/
+lib/alxlib/lib/
+lib/alxlib/debug/
+lib/alxlib/*.tar.gz
+lib/alxlib/*.zip
+
+# Compiled artifacts
+*.o
+*.d
+*.so
+*.a
+
+# IDE / OS
+.cache/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local-only material: not version-controlled, not shipped (rooted: the vendored
+# lib/alxlib/doc/ must never be caught by these)
+/CLAUDE.md
+/doc/
+/agent/
+/eval/
+
+# Local measurement device
+/prelude/

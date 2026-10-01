@@ -1,0 +1,19 @@
+var list = $json_parse(orders);
+var tot = map{};
+for (var o : list) {
+    var r = o["region"];
+    tot[r] = $map_get(tot, r, 0.0) + o["amount"];
+}
+var keys = $map_keys(tot);
+for (var i = 0; i < $vec_size(keys); ++i) {
+    var best = i;
+    for (var j = i + 1; j < $vec_size(keys); ++j) {
+        if (tot[keys[j]] > tot[keys[best]]) { best = j; }
+    }
+    var tmp = keys[i];
+    keys[i] = keys[best];
+    keys[best] = tmp;
+}
+var out = [];
+for (var k : keys) { $vec_push(out, k + " " + string(tot[k], 2)); }
+return out;

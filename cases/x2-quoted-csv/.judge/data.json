@@ -1,0 +1,1 @@
+{"csv": "service,tier,cost,owner\napi,core,120.50,\"Doe, Jane\"\nweb,edge,80.25,\"Smith, John\"\napi,core,340.00,\"O\"\"Brien, Pat\"\nweb,edge,50.00,\"Lee, Ann\"\ncache,edge,10.25,\"Ng, Kim\"\ncache,edge,0.50,\"Zed\"\napi,core,99.50,\"van der Berg, Jo\"\nweb,edge,25.75,\"Kowalski\"\n"}

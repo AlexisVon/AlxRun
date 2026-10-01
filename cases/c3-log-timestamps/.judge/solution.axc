@@ -1,0 +1,7 @@
+var log = $fs_read("cases/c3-log-timestamps/data/app.log");
+var out = [];
+for (var line : $str_split(log, " ")) { }
+for (var l : $str_split(log, "\n")) {
+    if ($str_contains(l, "ERROR")) { $vec_push(out, $str_left(l, 19)); }
+}
+return out;

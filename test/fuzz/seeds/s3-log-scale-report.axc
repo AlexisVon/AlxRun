@@ -1,0 +1,38 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// Log-scale analysis: doubling times, dB levels, cube-root volumes, formatting.
+var raw = "name,base,peak\nSun,1.0,3.8e26\nEarth,5.97e24,5.97e24\nJupiter,1.9e27,1.9e27\nMoon,7.34e22,7.34e22\nPebble,0.001,0.001\nOcean,1.4e21,1.4e21\nStar,2e30,2e30";
+var lines = $str_split($str_trim(raw, " \n"), "\n");
+var out = [];
+for (var i = 1; i < $vec_size(lines); ++i) {
+    var f = $str_split(lines[i], ",");
+    if ($vec_size(f) != 3) continue;
+    var name = f[0];
+    var val = float(f[2]);
+    if (val <= 0.0) continue;
+    // log2 for doubling: how many doublings from 1.0 to val
+    var doublings = $math_log2(val);
+    // log10 for magnitude: order of magnitude
+    var mag = $math_log10(val);
+    // cube root for volume equivalence (val as volume -> side length)
+    var side = $math_cbrt(val);
+    // dB-style: 20*log10(val) like a signal level
+    var dbLevel = 20.0 * $math_log10(val);
+    // fractional part and rounding for display
+    var frac = $math_fmod(doublings, 1.0);
+    var rounded = $math_round(doublings);
+    var truncated = $math_trunc(doublings);
+    // type check: confirm the value is numeric
+    var vtype = type(val);
+    $vec_push(out, name
+        + " log2=" + string(doublings, 2)
+        + " log10=" + string(mag, 2)
+        + " cbrt=" + string(side, 4)
+        + " dB=" + string(dbLevel, 1)
+        + " frac=" + string(frac, 3)
+        + " rnd=" + string(rounded, 0)
+        + " trn=" + string(truncated, 0)
+        + " type=" + vtype);
+}
+return out;

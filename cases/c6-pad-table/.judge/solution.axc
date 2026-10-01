@@ -1,0 +1,8 @@
+var out = [];
+for (var line : $str_split($str_trim(cfg), "\n")) {
+    var f = $str_split($str_trim(line), "=");
+    var pad = "";
+    while ($str_size(f[0] + pad) < 12) { pad = pad + " "; }
+    $vec_push(out, f[0] + pad + f[1]);
+}
+return out;

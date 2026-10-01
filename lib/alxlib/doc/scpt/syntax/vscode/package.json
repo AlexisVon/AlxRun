@@ -1,0 +1,43 @@
+{
+  "name": "vscode-alexis-core",
+  "displayName": "Alexis Script (Core)",
+  "description": "Core syntax highlighting for Alexis Script (.axc) — no extensions",
+  "version": "0.1.0",
+  "publisher": "alexis",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "alexis-script-core",
+        "aliases": [
+          "Alexis Script (Core)",
+          "alexis-core",
+          "axc"
+        ],
+        "extensions": [
+          ".axc"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "alexis-script-core",
+        "scopeName": "source.axc",
+        "path": "./syntaxes/alexis.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "alexis-script-core",
+        "path": "./snippets/axc.json"
+      }
+    ]
+  }
+}

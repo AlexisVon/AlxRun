@@ -1,0 +1,5 @@
+2026-09-18 10:02:11 INFO  starting up
+2026-09-18 10:02:13 ERROR disk full
+2026-09-18 10:02:15 WARN  retrying
+2026-09-18 10:02:19 ERROR upstream timeout
+2026-09-18 10:02:24 INFO  recovered

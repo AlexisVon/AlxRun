@@ -1,0 +1,43 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// s6 — Table reshuffle: merge batches, insert, sort, reverse section, JSON summary.
+var a = "Alice,sales,90000,88\nBob,eng,110000,92\nCarol,hr,75000,85";
+var b = "Dave,eng,120000,95\nEve,sales,80000,90\nFrank,hr,70000,80";
+// Parse batch A and B into [name,dept,salary,score] rows
+var rows = [];
+for (var line : $str_split(a, "\n")) { $vec_push(rows, $str_split(line, ",")); }
+var bRows = [];
+for (var line : $str_split(b, "\n")) { $vec_push(bRows, $str_split(line, ",")); }
+// Insert "Grace,finance,95000,87" between rows 2 and 3
+$vec_insert(rows, 2, $str_split("Grace,finance,95000,87", ","));
+// Concatenate batch B after batch A
+$vec_merge(rows, bRows);
+// Extract salary column as numeric vector for max/min
+var sals = [];
+for (var r : rows) { $vec_push(sals, float(r[2])); }
+// Sort descending and take top-3 by salary
+$vec_sort_desc(sals);
+var topN = sals[0,3];
+// Sort ascending for bottom-3 by score
+var scores = [];
+for (var r : rows) { $vec_push(scores, float(r[3])); }
+$vec_sort(scores);
+var botN = scores[0,3];
+// A slice is read-only, so this reverses a copy: rows keeps its order (the pair is still probed)
+$vec_reverse(rows[2,5]);
+// Build report
+var report = ["=== Full Table ===", "Name   Dept      Salary   Score"];
+for (var r : rows) {
+    $vec_push(report, r[0] + "   " + r[1] + "   " + r[2] + "   " + r[3]);
+}
+$vec_push(report, "=== Top-3 Salary ===");
+$vec_push(report, "max=" + string(topN[0], 0) + " " + string(topN[1], 0) + " " + string(topN[2], 0));
+$vec_push(report, "peak=" + string($vec_max(sals), 0) + " floor=" + string($vec_min(scores), 0));
+$vec_push(report, "=== Bottom-3 Score ===");
+$vec_push(report, "min=" + string(botN[0], 0) + " " + string(botN[1], 0) + " " + string(botN[2], 0));
+// One-line JSON summary
+var summary = map{"rows": int(rows[null]), "top_salary": topN[0], "low_score": botN[0]};
+$vec_push(report, $json_str(summary));
+$vec_push(report, $json_compact(summary));
+return report;

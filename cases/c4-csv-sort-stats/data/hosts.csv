@@ -1,0 +1,6 @@
+host,uptime_pct,errors
+web-01,99.95,0
+web-02,97.10,3
+db-01,99.99,1
+cache-01,88.40,12
+web-03,99.80,2

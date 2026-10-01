@@ -1,0 +1,54 @@
+// x2 -- reference solution: a hand-written CSV walk (quoted fields break $str_split), then the
+// per-tier totals.
+def fields(line) {
+    var out = [];
+    var cur = "";
+    var in_q = false;
+    for (var i = 0; i < $str_size(line); ++i) {
+        var c = $str_mid(line, i, 1);
+        if (in_q) {
+            if (c == "\"") {
+                if ($str_mid(line, i + 1, 1) == "\"") { cur += "\""; i = i + 1; }
+                else in_q = false;
+            } else {
+                cur += c;
+            }
+        } else if (c == "\"") {
+            in_q = true;
+        } else if (c == ",") {
+            $vec_push(out, cur);
+            cur = "";
+        } else {
+            cur += c;
+        }
+    }
+    $vec_push(out, cur);
+    return out;
+}
+var rows = $str_split($str_trim(csv, " \n"), "\n");
+var tot = map{};
+var cnt = map{};
+for (var r = 1; r < $vec_size(rows); ++r) { // row 0 is the header
+    var f = fields(rows[r]);
+    var tier = f[1];
+    tot[tier] = $map_get(tot, tier, 0.0) + float(f[2]);
+    cnt[tier] = $map_get(cnt, tier, 0) + 1;
+}
+var tiers = $map_keys(tot); // sorted; the stable swap keeps ties alphabetical
+for (var a = 0; a < $vec_size(tiers); ++a) {
+    for (var b = a + 1; b < $vec_size(tiers); ++b) {
+        if ($map_get(tot, tiers[b], 0.0) > $map_get(tot, tiers[a], 0.0)) {
+            var tmp = tiers[a];
+            tiers[a] = tiers[b];
+            tiers[b] = tmp;
+        }
+    }
+}
+var out = [];
+for (var k = 0; k < $vec_size(tiers); ++k) {
+    var g = tiers[k];
+    var n = $map_get(cnt, g, 0);
+    var sum = $map_get(tot, g, 0.0);
+    $vec_push(out, g + " " + string(n) + " " + string(sum, 2) + " " + string(sum / n, 2));
+}
+return out;

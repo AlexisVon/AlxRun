@@ -1,0 +1,112 @@
+{
+  "var": {
+    "prefix": "var",
+    "body": "var ${1:name} = ${2:value};",
+    "description": "Variable declaration"
+  },
+  "here": {
+    "prefix": "here",
+    "body": "here()",
+    "description": "Source position constant — map {row, col, ofst, file} of this call site"
+  },
+  "def": {
+    "prefix": "def",
+    "body": "def ${1:func}(${2:args}) {\n\t$0\n}",
+    "description": "Function definition"
+  },
+  "if": {
+    "prefix": "if",
+    "body": "if (${1:condition}) {\n\t$0\n}",
+    "description": "If statement"
+  },
+  "if-else": {
+    "prefix": "ifelse",
+    "body": "if (${1:condition}) {\n\t$0\n} else {\n\t\n}",
+    "description": "If-else statement"
+  },
+  "while": {
+    "prefix": "while",
+    "body": "while (${1:condition}) {\n\t$0\n}",
+    "description": "While loop"
+  },
+  "for": {
+    "prefix": "for",
+    "body": "for (var ${1:i} = ${2:0}; ${1:i} < ${3:n}; ${1:i}++) {\n\t$0\n}",
+    "description": "For loop"
+  },
+  "for-each": {
+    "prefix": "foreach",
+    "body": "for (${1:v} : ${2:collection}) {\n\t$0\n}",
+    "description": "For-each loop"
+  },
+  "switch": {
+    "prefix": "switch",
+    "body": "switch (${1:expr}) {\n\tcase ${2:value}:\n\t\t$0\n\t\tbreak;\n\tdefault:\n\t\t\n\t\tbreak;\n}",
+    "description": "Switch statement"
+  },
+  "try-catch": {
+    "prefix": "try",
+    "body": "try {\n\t$0\n} catch (${1:e}) {\n\t\n}",
+    "description": "Try-catch block"
+  },
+  "import": {
+    "prefix": "import",
+    "body": "import ${1:module} as ${2:alias};",
+    "description": "Import module"
+  },
+  "link": {
+    "prefix": "link",
+    "body": "link ${1:lib}.so as ${2:alias};",
+    "description": "Link native library"
+  },
+  "throw": {
+    "prefix": "throw",
+    "body": "throw ${1:\"error message\"};",
+    "description": "Throw exception"
+  },
+  "delete": {
+    "prefix": "delete",
+    "body": "delete ${1:var};",
+    "description": "Delete variable"
+  },
+  "return": {
+    "prefix": "return",
+    "body": "return ${1:value};",
+    "description": "Return statement"
+  },
+  "vec": {
+    "prefix": "vec",
+    "body": "vec[${1:elements}]",
+    "description": "Create vector"
+  },
+  "map": {
+    "prefix": "map",
+    "body": "map{${1:key}: ${2:value}}",
+    "description": "Create map"
+  },
+  "lst": {
+    "prefix": "lst",
+    "body": "lst[${1:elements}]",
+    "description": "Create linked list"
+  },
+  "type": {
+    "prefix": "type",
+    "body": "type(${1:expr})",
+    "description": "Get type name"
+  },
+  "env": {
+    "prefix": "env",
+    "body": "env([${1:\".\"}])",
+    "description": "Set module search paths"
+  },
+  "eval": {
+    "prefix": "eval",
+    "body": "eval(${1:code_str})",
+    "description": "Execute string as code"
+  },
+  "trap": {
+    "prefix": "trap",
+    "body": "trap(${1:condition}, ${2:args})",
+    "description": "Debug breakpoint (no-op without host hook)"
+  }
+}

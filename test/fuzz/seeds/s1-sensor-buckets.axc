@@ -1,0 +1,39 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// Sensor readings: clean malformed rows, clamp outliers, bucket into windows, stats.
+var raw = "ts,val\n101,23.5\n105,22.1\n108,-500.0\n112,24.0\n118,999.9\n121,21.0\n125,22.8\n131,23.2\n137,22.5\n145,21.8\n152,24.1\n158,23.0\n163,22.9\n171,23.6\n178,22.2\n185,21.5\n192,24.3\n199,23.1\n206,22.7\n213,bad\n221,23.4\n228,22.0\n236,23.8\n245,21.9\n253,24.0\n261,23.3\n269,22.4\n278,23.7\n287,21.6\n296,24.2";
+var lines = $str_split($str_trim(raw, " \n"), "\n");
+var LO = 15.0; var HI = 30.0; var numPat = "^-?[0-9]+\\.?[0-9]*$"; var pts = [];
+for (var i = 1; i < $vec_size(lines); ++i) {
+    var parts = $str_split(lines[i], ",");
+    if ($vec_size(parts) != 2 || !$regex_match(numPat, parts[1])) continue;
+    var v = float(parts[1]);
+    $vec_push(pts, [float(parts[0]), $math_clamp(v, LO, HI), $math_sign(v)]); // clamp + sign
+}
+// Bucket: window width = 50, starting at timestamp 100
+var W = 50.0; var buckets = map{}; var order = [];
+for (var p : pts) {
+    var key = string(int($math_trunc((p[0] - 100.0) / W)));
+    if (!$map_has(buckets, key)) { buckets[key] = []; $vec_push(order, key); }
+    var arr = $map_get(buckets, key); $vec_push(arr, p[1]); buckets[key] = arr;
+}
+// Per-bucket stats: count, min, max, mean, mean absolute deviation
+var out = [];
+for (var k : order) {
+    var vals = $map_get(buckets, k); var n = $vec_size(vals);
+    var mn = vals[0]; var mx = vals[0]; var s = 0.0; var devSum = 0.0; var negCount = 0;
+    for (var v : vals) { mn = $math_min(mn, v); mx = $math_max(mx, v); s += v; }
+    var mean = s / float(n);
+    for (var v : vals) { devSum += $math_abs(v - mean); if ($math_sign(v - mean) < 0) negCount += 1; }
+    var mad = devSum / float(n); var frac = $math_fmod(mean, 1.0);
+    var loB = 100.0 + float(int(k)) * W;
+    var nearCeil = bool(1 - int(mx < HI - 0.01));
+    var bucketRow = int($math_ceil(float(n) / 2.0));
+    $vec_push(out, "w[" + string(float($math_trunc(loB)), 0) + "," + string(float($math_trunc(loB + W)), 0)
+        + ") n=" + string(float(n), 0) + " mid=" + string(float(bucketRow), 0)
+        + " min=" + string(mn, 1) + " max=" + string(mx, 1)
+        + " mean=" + string(mean, 1) + " mad=" + string(mad, 2)
+        + " neg=" + string(float(negCount), 0) + (nearCeil ? " CLAMPED" : ""));
+}
+return out;

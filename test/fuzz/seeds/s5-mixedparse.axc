@@ -1,0 +1,71 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// s5 — Mixed-delimiter parsing and field validation.
+// Parses config lines mixing =, :, ; separators and quoted values,
+// coerces fields via regex detection, validates, prints typed inventory.
+
+var data = "name = \"Alice\" ; age : 30 ; active = true\n"
++ "name = \"Bob\" ; age : 25 ; active = false\n"
++ "name = \"Carol\" ; age : 42 ; active = true\n"
++ "name = \"Dave\" ; age : 19 ; active = true\n"
++ "name = \"Eve\" ; age : 55 ; active = false";
+
+// Binary signature of the input (spelled uppercase on purpose: case and separators fold)
+var sig = bytes($hash_sha256(data), "HEX");
+
+var rows = $str_split(data, "\n");
+var typeCounts = map{};
+var ageValid = 0;
+var activeTrue = 0;
+
+for (var row : rows) {
+    var fields = $regex_split("[;]", row);
+    for (var field : fields) {
+        field = $str_trim(field);
+        var kv = $regex_split("[=:]", field);
+        if ($vec_size(kv) < 2) continue;
+        var key = $str_trim(kv[0]);
+        var raw = $str_trim(kv[1]);
+        // bool validates non-empty key and value
+        if (!bool($str_size(key)) || !bool($str_size(raw))) continue;
+        // Strip surrounding quotes via group capture
+        var qGroups = $regex_group("^\"(.*)\"$", raw);
+        if ($vec_size(qGroups) > 0) raw = qGroups[0];
+        // Detect numeric via regex_find
+        var numHit = $regex_find("^[0-9]+$", raw);
+        if (numHit != null) {
+            var n = int(raw);
+            typeCounts["int"] = $map_get(typeCounts, "int", 0) + 1;
+            if (key == "age" && n >= 18 && n <= 65) ageValid = ageValid + 1;
+        } else if (raw == "true") {
+            typeCounts["bool"] = $map_get(typeCounts, "bool", 0) + 1;
+            activeTrue = activeTrue + 1;
+        } else if (raw == "false") {
+            typeCounts["bool"] = $map_get(typeCounts, "bool", 0) + 1;
+        } else {
+            typeCounts["string"] = $map_get(typeCounts, "string", 0) + 1;
+        }
+    }
+}
+
+// Merge validation summary into type counts
+$map_merge(typeCounts, map{"age_valid": ageValid, "active_true": activeTrue});
+
+// Aggregate total via $map_values
+var allCounts = $map_values(typeCounts);
+var total = 0;
+for (var c : allCounts) total = total + c;
+
+var out = ["=== Field Type Inventory ==="];
+for (var k : $map_keys(typeCounts)) {
+    var v = $map_get(typeCounts, k);
+    $vec_push(out, k + " [" + type(v) + "]: " + string(v));
+}
+$vec_push(out, "total entries: " + string(total));
+$vec_push(out, "input sig type: " + type(sig) + " len: " + string($str_size(string(sig, "hex"))));
+// A legacy upstream labels its rows in GBK: decode it, re-encode as utf8, carry the hex along
+var label = string(bytes("d6d0cec4", "HEX"), "GBK");
+$vec_push(out, "label: " + label + " utf8_hex: " + string(bytes(label, "utf8"), "hex"));
+$vec_push(out, "sig b64: " + string(sig, "base64"));
+return out;

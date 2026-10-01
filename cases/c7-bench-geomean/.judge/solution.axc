@@ -1,0 +1,20 @@
+// c7 -- reference solution. A row is date,commit,<12 "S/N" cells; only the unweighted geometric
+// means (definition in data/bench.md). The original shape: a real own-use task where the definition
+// had to be dug out of that file yourself; the unweighted half is what was asked back then too.
+var text = $fs_read("cases/c7-bench-geomean/data/runs.csv");
+var rows = $str_split($str_trim(text, " \n"), "\n");
+var out = [];
+for (var row : rows) {
+    var f = $str_split(row, ",");
+    var s = 0.0; var s2 = 0.0;
+    for (var i = 0; i < 12; ++i) {
+        var p = $str_split(f[2 + i], "/");
+        var r = float(p[0]) / float(p[1]);
+        s += $math_ln(r);
+        if (i >= 2) s2 += $math_ln(r); // the two ex cases lead the row
+    }
+    $vec_push(out, f[0] + " " + f[1]
+        + " | all12=" + string($math_exp(s / 12.0), 1)
+        + " noex10=" + string($math_exp(s2 / 10.0), 1));
+}
+return out;

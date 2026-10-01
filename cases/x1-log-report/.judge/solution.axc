@@ -1,0 +1,35 @@
+// x1 -- reference solution: parse every line, aggregate per path, write the report, and pin the
+// write with its digest.
+var log = $fs_read("cases/x1-log-report/data/access.log");
+var lines = $str_split($str_trim(log, " \n"), "\n");
+var total = map{};
+var bad = map{};
+for (var ln : lines) {
+    var g = $regex_group("\"[A-Z]+ ([^ ]+) HTTP/[0-9.]+\" ([0-9]{3})", ln);
+    var path = g[0];
+    var st = int(g[1]);
+    total[path] = $map_get(total, path, 0) + 1;
+    if (st >= 500) bad[path] = $map_get(bad, path, 0) + 1;
+}
+var paths = $map_keys(bad); // sorted; equal counts keep alphabetical order through the stable swap
+for (var i = 0; i < $vec_size(paths); ++i) {
+    for (var j = i + 1; j < $vec_size(paths); ++j) {
+        if ($map_get(bad, paths[j], 0) > $map_get(bad, paths[i], 0)) {
+            var tmp = paths[i];
+            paths[i] = paths[j];
+            paths[j] = tmp;
+        }
+    }
+}
+var top = $vec_size(paths) < 3 ? $vec_size(paths) : 3;
+var rows = [];
+for (var k = 0; k < top; ++k) {
+    var p = paths[k];
+    var n = $map_get(bad, p, 0);
+    $vec_push(rows, p + " " + string(n) + " " + string(100.0 * n / $map_get(total, p, 1), 2) + "%");
+}
+$fs_write("bin/x1-report.md", $str_join(rows, "\n") + "\n");
+var out = map{};
+out["rows"] = rows;
+out["report_sha256"] = $fs_sha256("bin/x1-report.md");
+return out;

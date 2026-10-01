@@ -1,0 +1,5 @@
+var hot = [];
+for (var r : readings) { if (r > 80) { $vec_push(hot, r); } }
+var sum = 0.0;
+for (var h : hot) { sum = sum + h; }
+return string(sum / $vec_size(hot), 2);

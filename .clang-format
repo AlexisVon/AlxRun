@@ -1,0 +1,63 @@
+# Visual Studio default C++ formatting style
+BasedOnStyle: LLVM
+
+# Indentation
+UseTab: Never
+IndentWidth: 4
+TabWidth: 4
+AccessModifierOffset: -4
+NamespaceIndentation: All
+
+# Braces — K&R style (always attach, enums relaxed)
+BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterEnum: false
+
+# Line width — VS defaults to no column limit
+ColumnLimit: 0
+
+# Switch/case — allow single-statement case on same line
+IndentCaseLabels: false
+AllowShortCaseLabelsOnASingleLine: true
+
+# Short statements — allow single-statement bodies on the same line
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortLoopsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+
+# Pointers & references
+PointerAlignment: Left
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceAfterCStyleCast: true
+
+# Braced lists
+Cpp11BracedListStyle: true
+
+# Alignment
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: false
+
+# Line breaks
+AlwaysBreakTemplateDeclarations: No
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+
+# Namespace comments — VS does not enforce FixNamespaceComments
+FixNamespaceComments: false
+
+# Preprocessor directives
+IndentPPDirectives: AfterHash
+
+# Include sorting
+SortIncludes: Never
+SortUsingDeclarations: false
+
+# Misc
+ReflowComments: false
+MaxEmptyLinesToKeep: 2

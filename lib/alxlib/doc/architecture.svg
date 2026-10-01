@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 334 66" font-family="system-ui, -apple-system, sans-serif" font-size="9">
+
+  <!-- Layer 2 -->
+  <rect x="2" y="2" width="196" height="20" fill="#F9A825"/>
+  <text x="100" y="15" text-anchor="middle" fill="#fff" font-weight="600">alxscpt</text>
+
+  <rect x="200" y="2" width="132" height="20" fill="#E53935"/>
+  <text x="266" y="15" text-anchor="middle" fill="#fff" font-weight="600">alxcomm</text>
+
+  <!-- Layer 1 -->
+  <rect x="2" y="24" width="300" height="20" fill="#1E88E5"/>
+  <text x="152" y="37" text-anchor="middle" fill="#fff" font-weight="600">alxcore</text>
+
+  <!-- Layer 0 -->
+  <rect x="2" y="46" width="120" height="20" fill="#43A047"/>
+  <text x="62" y="59" text-anchor="middle" fill="#fff" font-weight="600">alxbase</text>
+
+  <rect x="124" y="46" width="28" height="20" fill="#BDBDBD"/>
+  <text x="138" y="59" text-anchor="middle" fill="#424242" font-size="8">LZ4</text>
+
+  <rect x="154" y="46" width="28" height="20" fill="#BDBDBD"/>
+  <text x="168" y="59" text-anchor="middle" fill="#424242" font-size="8">zlib</text>
+
+  <rect x="184" y="46" width="28" height="20" fill="#BDBDBD"/>
+  <text x="198" y="59" text-anchor="middle" fill="#424242" font-size="8">zstd</text>
+
+  <rect x="214" y="46" width="28" height="20" fill="#BDBDBD"/>
+  <text x="228" y="59" text-anchor="middle" fill="#424242" font-size="7">SQLite3</text>
+
+  <rect x="244" y="46" width="28" height="20" fill="#BDBDBD"/>
+  <text x="258" y="59" text-anchor="middle" fill="#424242" font-size="7">libjpeg</text>
+
+  <rect x="274" y="46" width="28" height="20" fill="#BDBDBD"/>
+  <text x="288" y="59" text-anchor="middle" fill="#424242" font-size="7">PCRE2</text>
+
+  <!-- OpenSSL: spans layer 0+1 -->
+  <rect x="304" y="24" width="28" height="42" fill="#BDBDBD"/>
+  <text x="318" y="44" text-anchor="middle" fill="#424242" font-size="6" writing-mode="tb">OpenSSL</text>
+
+</svg>

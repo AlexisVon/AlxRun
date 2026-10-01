@@ -1,0 +1,38 @@
+// Copyright (c) 2026 AlexisVon
+// SPDX-License-Identifier: Apache-2.0
+
+// 2-D point pairs: distance, compass bearing, quadrant from lat/lon style coords.
+var raw = "name1,x1,y1,name2,x2,y2\nA,0.0,0.0,B,3.0,4.0\nA,0.0,0.0,C,-3.0,4.0\nA,0.0,0.0,D,-3.0,-4.0\nA,0.0,0.0,E,3.0,-4.0\nB,3.0,4.0,F,6.0,8.0\nC,-3.0,4.0,G,0.0,0.0\nH,1.0,1.0,I,1.0,1.0\nJ,0.0,5.0,K,5.0,0.0";
+var lines = $str_split($str_trim(raw, " \n"), "\n");
+var out = [];
+for (var i = 1; i < $vec_size(lines); ++i) {
+    var f = $str_split(lines[i], ",");
+    if ($vec_size(f) != 6) continue;
+    var dx = float(f[4]) - float(f[1]); // delta x
+    var dy = float(f[5]) - float(f[2]); // delta y
+    var dist = $math_hypot(dx, dy);
+    if (dist < 0.0001) { $vec_push(out, f[0] + "->" + f[3] + " d=0.00 ORIGIN"); continue; }
+    var angleRad = $math_atan2(dy, dx); // angle from east, CCW positive
+    var angleDeg = $math_deg(angleRad);
+    // compass bearing: 0=N, 90=E, clockwise from north
+    var bearing = $math_fmod(90.0 - angleDeg + 360.0, 360.0);
+    // quadrant via sin/cos sign check
+    var cs = $math_cos(angleRad); var sn = $math_sin(angleRad);
+    var quad = "?";
+    if (cs >= 0 && sn >= 0) quad = "NE";
+    else if (cs < 0 && sn >= 0) quad = "NW";
+    else if (cs < 0 && sn < 0) quad = "SW";
+    else quad = "SE";
+    // cross-check: asin(dy/dist) and acos(dx/dist) should match the angles
+    var asinDeg = $math_deg($math_asin(dy / dist));
+    var acosDeg = $math_deg($math_acos(dx / dist));
+    // round-trip: rad->deg->rad should recover original; verify via $math_rad
+    var roundTripErr = $math_abs($math_rad(angleDeg) - angleRad); // should be ~0
+    $vec_push(out, f[0] + "->" + f[3]
+        + " d=" + string(dist, 2)
+        + " bear=" + string(bearing, 1)
+        + " q=" + quad
+        + " asin=" + string(asinDeg, 1)
+        + " acos=" + string(acosDeg, 1));
+}
+return out;
