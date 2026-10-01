@@ -114,6 +114,10 @@ if(ALXRUN_STATIC)
     target_link_options(alxrun PRIVATE -static)
 endif()
 
+# The version lives in project() above, one source; the CLI's -v and the MCP serverInfo print it
+# from here rather than from a second copy.
+target_compile_definitions(alxrun PRIVATE ALXRUN_VERSION="${PROJECT_VERSION}")
+
 # ---------------------------------------------------------------------------
 # Split debug info
 # ---------------------------------------------------------------------------

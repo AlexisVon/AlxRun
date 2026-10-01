@@ -122,7 +122,7 @@ int main(int _argc, char** _argv) {
         return 0;
     }
     if (face == "-v" || face == "--version") {
-        std::cout << "alxrun 0.1.0\n";
+        std::cout << "alxrun " << ALXRUN_VERSION << "\n";
         return 0;
     }
     if (face == "--capabilities" || face == "--cap") {

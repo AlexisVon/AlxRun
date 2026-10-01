@@ -19,7 +19,7 @@ namespace mcp {
 
     namespace {
 
-        constexpr const char* kVersion = "0.1.0";
+        constexpr const char* kVersion = ALXRUN_VERSION;
         constexpr const char* kDescription = "AScript execution kernel";
         // One line may not exceed the payload the block carries: the only place the client's own
         // memory is bounded (doc/issue.md I-4). The supervisor checks the same number before it

@@ -13,21 +13,30 @@ script dies in its own process, never your session.
 
 ## Quickstart
 
-```bash
-# 1. Build. Needs CMake >= 3.19 and a C++17 compiler. The engine library (AlxLib) is linked
-#    statically and its binaries are not in this repository: unpack an AlxLib release package
-#    into lib/alxlib/ first (github.com/AlexisVon/AlxLib, release assets).
-mkdir -p build && cd build && cmake .. && make -j7 && cd ..
+**Grab a release** -- Linux x86-64, static; nothing to install but the binary:
 
-# 2. Register as an MCP tool. Each client it finds gets its own plan and its own confirmation --
-#    Claude Code, and Codex CLI when it is on PATH. No Bash rules are written.
-./bin/alxrun install -g
+```bash
+# from github.com/AlexisVon/AlxRun/releases (verify against the .sha256 beside the tarball)
+tar -xzf alxrun-0.1.0-linux-x64.tar.gz && cd alxrun-0.1.0-linux-x64
+
+# Register as an MCP tool. Each client it finds gets its own plan and its own confirmation --
+# Claude Code, and Codex CLI when it is on PATH. No Bash rules are written.
+./alxrun install -g
 #    -g additionally writes exactly two allow rules (run + capabilities, never a wildcard: a
 #    wildcard re-prompts per tool, and these two are the one review).
 
-# 3. Run something directly (the debug face).
-./bin/alxrun -e 'return rows + "!";' --data '{"rows": "hi"}'
+# Run something directly (the debug face).
+./alxrun -e 'return rows + "!";' --data '{"rows": "hi"}'
 # -> [ret] "hi!"
+```
+
+**Or build from source** -- CMake >= 3.19 and a C++17 compiler; the engine library (AlxLib) is
+linked statically and its binaries are not in this repository, so unpack its
+[release package](https://github.com/AlexisVon/AlxLib/releases/tag/v1.0.1) into `lib/alxlib/` first:
+
+```bash
+mkdir -p build && cd build && cmake .. && make -j7 && cd ..
+# the binary is bin/alxrun -- use it in place of ./alxrun below
 ```
 
 The installer auto-detects and wires up **Claude Code** and **Codex CLI** -- each with its own
@@ -44,9 +53,9 @@ mcp__alxrun__run({"code": "...", "data": {...}})
 The model looks up what it can use instead of memorizing it:
 
 ```bash
-./bin/alxrun --brief                  # the capability listing (resident in run's description)
-./bin/alxrun --demo                   # the language example (resident too)
-./bin/alxrun --capabilities 'str_'    # doc by family or key substring, with runnable examples
+./alxrun --brief                  # the capability listing (resident in run's description)
+./alxrun --demo                   # the language example (resident too)
+./alxrun --capabilities 'str_'    # doc by family or key substring, with runnable examples
 ```
 
 ## Why not "one Bash rule"
@@ -161,7 +170,8 @@ passed with `-D`: a second place that can disagree is worse than no knob.
 
 AlxLib is linked statically (a dynamic build would need `LD_LIBRARY_PATH` or an rpath, and an
 environment prefix breaks the client's rule matching), so the build expects the AlxLib package
-under `lib/alxlib/` -- see Quickstart.
+under `lib/alxlib/` -- see Quickstart. Releases cover Linux x86-64; a Windows build from source
+(MSVC) is untested.
 
 ```bash
 bash test/run.sh                # the gate: capability assertions + escape probes + end-to-end cases
