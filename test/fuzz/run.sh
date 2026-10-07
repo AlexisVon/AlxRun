@@ -98,13 +98,16 @@ cp "$ROOT"/agent/*.axc "$SEEDS"/ 2>/dev/null || true
 # Every call the tool has actually served (agent/usage/runnable). These are only *hoped* to be
 # clean, and a crasher takes a job down during the initial pass -- so each is vetted, and a
 # crasher is named and left out (that name is a finding, not noise).
+# The RSS bound is the campaign's own per-worker limit (a seed the fuzzer would OOM on is no seed),
+# and it lands a wall-probe (grows until the production wall, absent here) in seconds, not GBs.
 REAL_SEEDS=0
 for f in "$ROOT"/agent/usage/runnable/*.axc; do
     [ -f "$f" ] || continue
-    if timeout 25 "$HARNESS" "$f" >/dev/null 2>&1; then
+    if ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}hard_rss_limit_mb=$RSS_MB" \
+        timeout 25 "$HARNESS" "$f" >/dev/null 2>&1; then
         cp "$f" "$SEEDS"/ && REAL_SEEDS=$((REAL_SEEDS + 1))
     else
-        echo "-- real-usage ${f##*/}: CRASHES or STALLS — kept out of the seeds (grade it before calling it a bug)"
+        echo "-- real-usage ${f##*/}: crashes/OOMs/stalls under the harness — kept out of the seeds (grade it before calling it a bug)"
     fi
 done
 echo "== real-usage seeds vetted in: $REAL_SEEDS"
@@ -131,6 +134,9 @@ echo "== seeds: $(ls "$SEEDS" | wc -l) | working corpus: $(ls "$CORPUS" | wc -l)
 
 ARTIFACTS=$BUILD/artifacts
 mkdir -p "$ARTIFACTS"
+# Artifacts persist across campaigns -- this marker makes the tail count only what this run wrote.
+MARKER=$BUILD/campaign-start
+touch "$MARKER"
 echo "== fuzzing ${SECONDS_TO_RUN}s on $WORKERS workers, ${RSS_MB} MB each — artifacts in $ARTIFACTS"
 # -fork, not -jobs: only fork mode survives a crash in a child (-ignore_crashes is a fork-mode
 # flag). Without it the engine's known crash kills every job within seconds of starting.
@@ -144,5 +150,8 @@ cd "$ROOT" && "$HARNESS" "$CORPUS" "$SEEDS" \
     -max_len=65536 -timeout=20 -rss_limit_mb="$RSS_MB" \
     -artifact_prefix="$ARTIFACTS/" -print_final_stats=1
 
-echo "== crashes: $(find "$ARTIFACTS" -name 'crash-*' -o -name 'timeout-*' -o -name 'leak-*' | wc -l)"
-echo "== reproduce one: $HARNESS <artifact>   (or: ./bin/alxrun -e \"\$(cat <artifact>)\")"
+new_count() { find "$ARTIFACTS" -newer "$MARKER" -type f -name "$1" | wc -l; }
+echo "== new this run: oom $(new_count 'oom-*'), timeout $(new_count 'timeout-*'), crash $(new_count 'crash-*'), leak $(new_count 'leak-*'), slow-unit $(new_count 'slow-unit-*')"
+echo "== artifact dir totals, cumulative across campaigns: $(find "$ARTIFACTS" -type f | wc -l)"
+# File form, not -e "$(cat ...)": command substitution drops NUL bytes, and fuzzer units carry them.
+echo "== reproduce one: $HARNESS <artifact>   (or: ./bin/alxrun <artifact>)"

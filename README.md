@@ -32,7 +32,7 @@ tar -xzf alxrun-0.1.0-linux-x64.tar.gz && cd alxrun-0.1.0-linux-x64
 
 **Or build from source** -- CMake >= 3.19 and a C++17 compiler; the engine library (AlxLib) is
 linked statically and its binaries are not in this repository, so unpack its
-[release package](https://github.com/AlexisVon/AlxLib/releases/tag/v1.0.1) into `lib/alxlib/` first:
+[release package](https://github.com/AlexisVon/AlxLib/releases/tag/v1.0.2) into `lib/alxlib/` first:
 
 ```bash
 mkdir -p build && cd build && cmake .. && make -j7 && cd ..

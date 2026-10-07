@@ -1,6 +1,6 @@
 # AlxLib
 
-A general-purpose C++17 library: data types, cryptography, compression, networking, databases, a script engine.
+A general-purpose C++ library (C++11 and later): data types, cryptography, compression, networking, databases, and a script engine.
 
 ## Modules
 
@@ -20,7 +20,7 @@ A general-purpose C++17 library: data types, cryptography, compression, networki
 ### Dependencies
 
 - CMake ≥ 3.16
-- GCC/Clang (C++17)
+- GCC/Clang (C++11 and later — the public headers are C++11-clean; the build itself and the test suites use C++17, which Google Test requires, so C++11/14 carry no test coverage)
 - the third-party libraries must be provided by yourself and placed under `3rdpty/` (manifest, build requirements and sha256 in `3rdpty/README.md`): zlib, LZ4, zstd, SQLite3, libjpeg-turbo, PCRE2
 - OpenSSL (optional, for TLS)
 

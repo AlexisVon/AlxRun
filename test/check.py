@@ -100,7 +100,7 @@ for key in calls:
 # count so that cannot happen quietly; bump it when rows are added on purpose. With the
 # overflow switch off the count is exact: a lowered floor there would hide rows that outlived
 # their switch, which is the one thing the two must never do.
-MIN_ASSERTIONS = 213 if OVERFLOW_ON else 211
+MIN_ASSERTIONS = 231 if OVERFLOW_ON else 229
 if checked < MIN_ASSERTIONS:
     fails.append(f"only {checked} assertions -- rows were lost (floor {MIN_ASSERTIONS})")
 if not OVERFLOW_ON and checked != MIN_ASSERTIONS:
@@ -869,7 +869,8 @@ else:
     if len(resident) > 3072:
         fails.append(f"resident: the run description is {len(resident)} chars -- over its 3072 budget")
     pins = ["string(int,n)=base", "$vec_sort: nested left alone", "$regex_match: the whole",
-            "$json_str for containers", "inf/nan->null, int>2^53->float"]
+            "$json_str for containers", "inf/nan->null, int>2^53->float",
+            "byte-wise $str_*, [], regex", "in-place caps need a bare variable"]
     if OVERFLOW_ON:
         pins.append("int overflow: throws")
     elif "int overflow" in resident:

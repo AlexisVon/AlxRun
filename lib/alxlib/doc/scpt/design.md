@@ -806,7 +806,7 @@ bool init_fly_gate(FlyT* fly, mod_mng* mng, walker* _w, script_exception& _err, 
 | `int(v)` / `float(v)` / `string(v)` / `bool(v)` | type conversion through the `cov_*` matrix; a failure raises `ConvError` (`cov_bool` raises it for a value it has no answer for, such as a script object). null → the type's default value (0/0.0/""/false). `cov_int(string)` accepts the 0x/0o/0b prefixes; `cov_float(string)` accepts the JSON-like float format plus `inf` / `+inf` / `-inf` / `nan`, and an overflow (such as `1e999`) raises `ConvError` |
 | `bytes(v)` / `bytes(v, enc)` | byte-sequence conversion. One argument makes a raw copy (string), two arguments go through encoding conversion (hex/base64/GBK/UTF-8/UTF-16 and so on). null → empty bytes |
 | `vec(v)` / `map(v)` / `lst(v)` | container conversion + literal construction. null → an empty container |
-| `type(v)` | returns one of the 8 meta-type name strings |
+| `type(v)` | the value's type name: the 8 script types and null; a handle splits into func / import / link / area, with anyptr for a host object and null for an empty one; a variant type the script layer does not model reports `"unknown"` (never a null answer) |
 | `env(paths)` | runtime search paths |
 
 JSON encode/decode and I/O (`tojs`/`fmjs`/`print`/`input`) were migrated out to host-registered `$xxx` extension functions (2026-08-04) and are not engine built-ins.
@@ -1672,6 +1672,14 @@ Version ALXLIB 1.0.0 (the starting point of the new scheme; the old four-part nu
   - The free tail (from 16) is **given no values**: those numbers are not a contract and are free to be reordered
 - **Allocation failure split out of `ResourceError`**: `std::bad_alloc` / `std::length_error` are now `MemoryError` (the name a script `catch` sees changes with it), while a guard refusing is still `ResourceError` — the two face different things: a guard reports its own ceiling, whereas an allocation failure means the host has to supply the deployment's ceiling.
 - **Migration notes**: these ids differ from `1.0.0`'s (which simply followed declaration order) — **a host branching on the exit code must re-check**. A patch bump leaves the SONAME alone, so 1.0.0 and 1.0.1 **can be mixed**: without re-checking, the wrong code is read silently.
+
+**Migration log (2026-10-07, version 1.0.2: `type()` names handles — the `"?"` sentinel is gone)**:
+
+- **`type()` is total now**: it used to answer null for every value outside the nine script types. An `anyptr` splits by the engine's own registration ids — `"func"` (a callable: a module function, a link namespace/area function), `"import"` / `"link"` (the two entity kinds), `"area"` (a link sub-scope) — every other handle (an object a host handed over) keeps the bare `"anyptr"`, and a handle that holds nothing answers `"null"` (empty reads as null). A variant type the script layer does not model — only a host can hand one over: a 32-bit float, an unsigned integer, a `std::vector<T>` — reports `"unknown"`.
+- **The strict readers follow the same naming**: `type_name_script`'s old `"?"` default became `"unknown"` (the "Expected int, got ?" family of messages now names the value), and `op_icall`'s "expected function name string" message stopped leaking mangled C++ names — `@5()` said `got x`, it says `got int` now, and a handle says `got func`.
+- **Migration notes**: no opcode or AST change, so **vtype is untouched** and `.axp` products need no recompilation. A script that branched on `type(x) == null` for a handle must branch on the new name. Patch, not minor: the SONAME stays `.so.1.0`.
+
+Version ALXLIB 1.0.1 → 1.0.2.
 
 ### 10.2 Syntax
 

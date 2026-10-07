@@ -8,6 +8,8 @@ namespace capability {
     // One rule, one name; repeating the name adds another assertion to it. `=> !msg` means the code
     // must fail with msg in stderr; x = any container, k = a map key (the name stays short, the
     // assertions carry the rest). Everything here is asserted by test/run.sh.
+    // A '(' in a name costs constraints: no ':' (brief_entry() would strip it to a call head), and a
+    // head without a space must match [a-z][a-z0-9_]* (check.py's structural pass).
     const form s_notation[] = {
         {"x[null]=size", R"EX(return [1,2,3][null]; => 3)EX", nullptr, "", clan_notation | clan_index},
         {"x[null]=size", R"EX(return "hi"[null]; => 2)EX", nullptr, "", clan_notation | clan_index},
@@ -43,6 +45,33 @@ namespace capability {
         {"delete x[i]", R"EX(var s="abc"; delete s[0]; => ![TypeError] Type does not support delete)EX", nullptr, "", clan_notation | clan_index},
         {"x.k[i]", R"EX(var o=map{"s":"hi"}; return o.s[-1]; => "i")EX", nullptr, "", clan_notation | clan_index},
         {"x.k[i]", R"EX(var i=0; var o=map{"s":"hi"}; return o.s[i]; => !index in dot chain must be a literal)EX", nullptr, "", clan_notation | clan_index},
+        // The tail-tolerant read is the one silent half of chain access; mid-chain and [] fail loudly.
+        {"x.k[i].x: only tail absent: read null, write insert",
+         R"EX(var o=map{"v":[map{"x":1}]}; return o.v[0].x; => 1)EX", nullptr, "", clan_notation | clan_index},
+        {"x.k[i].x: only tail absent: read null, write insert",
+         R"EX(var o=map{"a":map{}}; return o.a.nn; => null)EX", nullptr, "", clan_notation | clan_index},
+        {"x.k[i].x: only tail absent: read null, write insert",
+         R"EX(var o=map{"a":map{}}; o.a.nn=5; return o; => {"a":{"nn":5}})EX", nullptr, "", clan_notation | clan_index},
+        {"x.k[i].x: only tail absent: read null, write insert",
+         R"EX(var o=map{}; return o.zz.x; => ![KeyError] map key not found: zz)EX", nullptr, "", clan_notation | clan_index},
+        {"x.k[i].x: only tail absent: read null, write insert",
+         R"EX(var o=map{"a":1}; return o["zz"]; => ![KeyError] map key not found: zz)EX", nullptr, "", clan_notation | clan_index},
+        // lang.md §15.2: only a bare variable passes by reference; any other argument is a copy.
+        {"$vec_push: o.a is a copy, write lost -- in-place caps need a bare variable",
+         R"EX(var o=map{"a":[1,2]}; $vec_push(o.a,3); return o; => {"a":[1,2]})EX", nullptr, "",
+         clan_notation},
+        {"$vec_push: o.a is a copy, write lost -- in-place caps need a bare variable",
+         R"EX(var o=map{"a":[1,2]}; $vec_insert(o.a,0,9); return o; => {"a":[1,2]})EX", nullptr, "",
+         clan_notation},
+        {"$vec_push: o.a is a copy, write lost -- in-place caps need a bare variable",
+         R"EX(var v=[1,2]; $vec_push(v,3); return v; => [1,2,3])EX", nullptr, "", clan_notation},
+        {"$vec_push: o.a is a copy, write lost -- in-place caps need a bare variable",
+         R"EX(var m=map{"a":[1,2]}; m["a"][null]=3; return m; => {"a":[1,2,3]})EX", nullptr, "",
+         clan_notation},
+        {"$vec_push: o.a is a copy, write lost -- in-place caps need a bare variable",
+         R"EX(var v=[1,2]; var w=v; $vec_push(w,3); return v; => [1,2])EX", nullptr, "", clan_notation},
+        {"$vec_push: o.a is a copy, write lost -- in-place caps need a bare variable",
+         R"EX(return $vec_reverse([1,2]); => null)EX", nullptr, "", clan_notation},
         {"x[k]:string", R"EX(var m=map{}; m[1]=2; => ![TypeError] map key must be a string)EX", nullptr, "", clan_notation | clan_index},
         {"x[k]:string", R"EX(return map{"a":1}[0]; => ![TypeError] map key must be a string)EX", nullptr, "", clan_notation | clan_index},
         {"x[k]=v writes", R"EX(var m=map{}; m["a"]=1; return m; => {"a":1})EX", nullptr, "", clan_notation | clan_index},
@@ -83,6 +112,26 @@ namespace capability {
         {"inf/nan->null, int>2^53->float: use string",
          R"EX(return [string(9007199254740993), 9007199254740993 == 9007199254740992]; => ["9007199254740993",false])EX",
          nullptr, "", clan_notation},
+        // Byte-wise by design: `string` is unencoded bytes (GBK/hex ride it too), so chars need vec().
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(return [$str_size("中"), $str_size("中a"), $str_size("中文"[0])]; => [3,4,1])EX",
+         nullptr, "", clan_notation | clan_index},
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(return "中文"[null]; => 6)EX", nullptr, "", clan_notation | clan_index},
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(return [$regex_find_all(".", "中")[null], $regex_find_all("[。！？]", "。")[null]]; => [3,3])EX",
+         nullptr, "", clan_notation | clan_index},
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(return $str_size($str_left("中文", 2)); => 2)EX", nullptr, "", clan_notation | clan_index},
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(return [vec("中a"), string([20013,74]), $str_size(string([20013,74]))]; => [[20013,97],"中J",4])EX",
+         nullptr, "", clan_notation | clan_index},
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(return vec(string(bytes("e4b8","hex"))); => ![ConvError] Invalid UTF-8 sequence in string)EX",
+         nullptr, "", clan_notation | clan_index},
+        {"byte-wise $str_*, [], regex; chars: vec(s)",
+         R"EX(var g=string(bytes("你好","gbk")); return $str_size(string(bytes(g),"gbk")); => 6)EX",
+         nullptr, "", clan_notation | clan_index},
     // A wrapped value passes for a real one, so overflow throws (ALXRUN_OVERFLOW_CHECK).
 #if ALXRUN_OVERFLOW_CHECK
         {"int overflow: throws, never wraps",
