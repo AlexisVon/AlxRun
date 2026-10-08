@@ -167,6 +167,9 @@ namespace alx {
         /// Hook entry point; returning false interrupts the execution that fired the event
         using hook_fn = bool (*)(hook_info& _info);
 
+        /// Host type-naming callback for a value the script layer cannot name; null/empty = the host does not know it either
+        using type_ex = const char* (*)(const variant& _v, void* _ud);
+
         /**
          * \brief Everything an engine is configured with
          *
@@ -206,6 +209,11 @@ namespace alx {
             pipe_out pipe_out_ptr = nullptr;
             /// Cookie passed back to pipe_out_ptr
             void* pipe_out_ud = nullptr;
+
+            /// Host type-naming callback; see engine::set_type_ex()
+            type_ex type_ex_ptr = nullptr;
+            /// Cookie passed back to type_ex_ptr
+            void* type_ex_ud = nullptr;
         };
 
         /**
@@ -599,6 +607,22 @@ namespace alx {
              * \param _in_ud Cookie passed back to _in; _out_ud the one passed to _out
              */
             virtual void set_pipe(pipe_in _in, pipe_out _out, void* _in_ud = nullptr, void* _out_ud = nullptr) = 0;
+            /**
+             * \brief Install the host's type-naming callback
+             *
+             * type() asks it about a value the script layer has no name of its own for -- an
+             * object a host handed over, or a variant type the script layer does not model --
+             * and uses the name it returns as-is; null or an empty answer means the host does
+             * not know it either, and "unknown" stands. The callback runs on whichever thread
+             * executes the script; the pointer it returns is read once, right after the call,
+             * never kept -- its storage must stay valid past the return. A C++ exception it
+             * throws is reported like a native's: a script try can catch it as NativeError,
+             * and without one the run comes back as NativeError.
+             *
+             * \param _fn Callback; null removes it
+             * \param _ud Cookie handed back to _fn
+             */
+            virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
 
             /// True while an exec() is running; false everywhere else, call() included
             virtual bool running() const = 0;
@@ -622,7 +646,6 @@ namespace alx {
             virtual void set_debug_enable(bool _on) = 0;
 
         public:
-
             /// What exec() and call() report: the value, how it went, and how long it took
             struct result {
                 /// Last statement's value, or the error message when error is not NoError

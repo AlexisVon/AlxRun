@@ -15,7 +15,7 @@ version):
 
 | Library | Version | License | Full text |
 |---|---|---|---|
-| AlxLib | 1.0.2 | MIT | `licenses/alxlib.txt` |
+| AlxLib | 1.1.0 | MIT | `licenses/alxlib.txt` |
 | PCRE2 | 10.48 | BSD-3-Clause **WITH** PCRE2-exception | `licenses/pcre2.txt` |
 | zstd | 1.5.7 | BSD-3-Clause (GPL-2 offered as an alternative) | `licenses/zstd.txt` |
 | LZ4 | 1.10.0 | BSD-2-Clause | `licenses/lz4.txt` |
@@ -25,7 +25,7 @@ All five arrive through the vendored AlxLib archive (`lib/alxlib/`): AlxLib is b
 static linking pulls in only the members this binary calls. No upstream source is patched here, so
 the "mark changed files" obligation is not triggered.
 
-**Provenance**: AlxLib is vendored as its release package at tag `v1.0.2`
+**Provenance**: AlxLib is vendored as its release package at tag `v1.1.0`
 (`github.com/AlexisVon/AlxLib`); the package name carries the commit sha it was built from.
 
 **Nested, and not in the binary** (measured — zero symbols): zstd's `lib/dictBuilder/divsufsort`

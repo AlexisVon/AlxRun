@@ -130,6 +130,18 @@ alx::variant* load(const std::string& _name, bool _auto_create = false);   // re
 - On the script side integers are all `long long` semantics and floating point is `double`; a host reads one back under `to<T>()`'s **lossless conversion** rule, and a type that does not fit gives the default value.
 - An object handed in from C++ travels in an `anyptr` (see `wrap<T>` in §11).
 
+### 4.1 Types the script layer has no name for `set_type_ex`
+
+```cpp
+using type_ex = const char* (*)(const alx::variant& _v, void* _ud);
+
+void set_type_ex(type_ex _fn, void* _ud = nullptr);
+```
+
+`type()` has two dead-end answers: an object a host handed over, and a variant type the script layer does not model (a 32-bit float, an unsigned integer, a `std::vector<T>`). Both go to this callback when one is installed — null or an empty answer means the host does not know it either, and `"unknown"` stands, which is also the answer with no callback at all; passing null removes the callback.
+
+The callback runs on the thread that executes the script, and the engine is not reentrant. The pointer it returns is read once, right after the call, and never kept — its storage has to stay valid past the return. A C++ exception it throws is reported like a native's: a script `try` can catch it as `NativeError`, and without one the run comes back as `NativeError`. The diagnostic messages that name a value (`"Expected int, got X"` and the like) never ask the callback and keep saying `"unknown"`.
+
 ---
 
 ## 5. Extension functions `$name`
@@ -253,7 +265,7 @@ const engine_config& wkconfig();
 ### 8.2 Row-level position `set_debug_enable`
 
 ```cpp
-void set_debug_enable(bool _on);      // false by default; at the end of the vtable
+void set_debug_enable(bool _on);      // false by default; after set_interrupt in the vtable
 ```
 
 - **One switch, two effects**: at parse time it decides whether position markers go in, at exec time whether positions are recorded and `debug` events fire. The semantics match `-g`: turning it off **suppresses**, it is not an error.
