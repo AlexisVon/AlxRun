@@ -26,7 +26,7 @@ namespace alx {
      * their order -- never on whether the CPU's accelerated path was taken -- so a digest written
      * by one build is reproduced by another. An instance is not synchronized: one per thread.
      */
-    class ALXCORE_API verify : public noncopyable {
+    class ALXBASE_API verify : public noncopyable {
     public:
 
         /**

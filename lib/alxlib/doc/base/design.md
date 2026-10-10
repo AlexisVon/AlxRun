@@ -8,7 +8,8 @@ This document records the **design decisions, implementation points and tuning n
 2. **No exceptions for control flow**: the library barely throws. Failure is expressed as "returns `nullptr` / returns `false` / returns `_def` / `null()` is true". The reason is that the data on the other side (network, file, script) produces malformed input at a high rate, and an exception path costs more than it is worth, with no control over when it fires.
 3. **Value semantics outside, pointer semantics inside**: `bytes` / `varmap` / `json_object` behave like values to the caller (a copy is a deep copy), while the implementation uses a reference count or a pointer container, so memory management is never pushed onto the caller.
 4. **Zero-copy first**: a read-only path always hands out a window type such as `bytes_view` / `content_meta`, materializing an owning object only when the data has to outlive the window.
-5. **C++11 floor**: `BUILD_TESTS=ON` asks for C++17 (gtest), while library code stays usable from C++11 (`autility.h` fills in the `_v` trait family for the older standards).
+5. **Demotion into base (2026-10-09)**: a facility from a higher layer may move here when it (a) is self-contained — no alx module and no third-party library is needed (the standard library, libc and compiler built-ins are fair game), (b) holds no shared mutable state and no concurrency machinery, and (c) has a converged interface — shape and contract frozen, with exposure tightening already done. The last point is why the move follows the freeze instead of triggering it: a lower layer pays more for an interface change, not less.
+6. **C++11 floor**: `BUILD_TESTS=ON` asks for C++17 (gtest), while library code stays usable from C++11 (`autility.h` fills in the `_v` trait family for the older standards).
 
 ---
 
@@ -315,3 +316,55 @@ Serialized data may come from outside (a disk, a network), so the decoding side 
 | `json` conversion | moving entries added (`from_*(&&)` / `take_*`) | const overloads alone meant two representations alive at once while converting a large value (a host hits its memory wall) |
 | `json` serialization | the private writers go append-style; the new `&&` entries eat the tree as they write | a leaf string was copied twice and every subtree built one more temporary string; serializing a large value had to feed the tree and the text both |
 | `variant::select` | index parsing changed to a bounded accumulation: an empty key, a non-decimal one and an overflow all answer `_def` as the contract says | `std::stoull` throws on an empty string and on an over-long number, contradicting the contract that "any segment that does not resolve answers `_def`" (the same origin as the path parsing of `aserial` / `varsolid`) |
+
+## 10. Encryption (AES)
+
+### 10.1 The three-layer structure
+
+```
+aes_base          the algorithm core: key expansion, the round functions, GHASH, padding (stateless, pure functions)
+  └ aes<128|192|256>   holds round_key, defines key_len / round_num
+      └ aes_iv<...>        adds the IV and its backup (for reset)
+          ├ aes_cbc
+          └ aes_ctr
+      └ aes_gcm            carries its own counter/ghash state, protected inheritance (the core stays hidden)
+```
+
+A work mode is **a template plus virtual functions**: the bit size is fixed at compile time (`key_exp_size` is a constant, `round_key` an on-stack array, with no heap allocation) and the mode lives in the polymorphic layer.
+
+### 10.2 The soft / hard dual implementation
+
+`cipher` / `inv_cipher` / `ghash` each come in a `_soft` and a `_hard` version, and each probes the CPU's capabilities at run time to pick one (`aes_base::hardcal()` reports AES-NI alone; GHASH is decided by a separate PCLMULQDQ probe). `TRY_AES_HARD` controls whether the hard path and the 16-byte aligned key array are enabled at all; with it off both probes can only answer false and every `_hard` entry point is an empty body.
+
+**GHASH's hard path computes in the reflected domain**: GCM numbers a block's bits from left to right, the leftmost being the coefficient of `y^0`; reversing the bit order of every byte (leaving the byte order alone) turns it into the plain polynomial "bit `q` is the coefficient of `y^q`", with the same sparse modulus as before, `y^128 + y^7 + y^2 + y + 1` -- the 128x128-bit product is assembled with PCLMULQDQ, and the high 128 bits fold back into the low ones with two passes of a multiplication by `0x87`. Both the reflection and its inverse happen inside `ghash_mul_hard`, so the two hardware entry points are semantically word-for-word identical to `ghash_soft` / `ghash_mul_soft`; they are **private**, like the `cipher_impl_hard` family, and reachable only through the self-probing `ghash()` -- a public entry point cannot carry a precondition such as "the CPU must have PCLMULQDQ" that the caller has no way to check.
+
+> Why the reflected subkey is not cached in `aes_gcm`: each GHASH block is one serial dependency chain (XOR → multiply → reflect), and the subkey reflection is unrelated to that chain, so out-of-order execution hides it inside the multiply's latency -- measured, with GCM's present serial usage there is **no difference**, and only reshaping the interleaving into a throughput-bound form could pay it back (and that account should be settled together with the power table for `H`).
+
+### 10.3 The semantics of the padding modes
+
+`buf_padding` / `buf_unpadding` are **public API** (brought in with a `using` in `aes<N>`), because the caller needs to pad before encrypting and strip after decrypting.
+
+| Mode | What is padded |
+|---|---|
+| `PKCS7` | every byte is the pad length |
+| `ZEROS` | fills 0, **nothing appended when already aligned** |
+| `ANSIX923` | the first n-1 bytes are 0 and the last byte is the length; a whole block is appended when already aligned |
+| `ISO10126` | this implementation fills `0xff` (the standard asks for random) and the last byte is the length; a whole block is appended when already aligned |
+
+> Revision log: `ANSIX923` / `ISO10126` originally padded nothing when "already aligned", while unpadding still stripped by the last byte -- **one implementation contradicting itself** (an aligned buffer's last byte is data itself, so any value below 16 was mis-stripped). Both now "always append a whole block", as the standards say. There is no reliable consistency in old ciphertext worth migrating.
+
+### 10.4 The CTR and GCM counters
+
+`aes_ctr` is a **stream**: `iv_index` records the offset inside the current block and carries across several `xcrypt` calls; the counter is incremented as one big-endian number (the carry walks from the last byte backwards). `encrypt` / `decrypt` share `xcrypt`.
+
+`aes_gcm` keeps J0 / the counter / the GHASH state in the object; the three-part `start(aad)` → `encrypt`/`decrypt` → `finish(tag)` guarantees that both the AAD and the ciphertext go into GHASH, and `finish` runs `reset()` on its way out (so the object is reusable).
+
+---
+
+## 11. Digest
+
+- **CRC is parameterized by template**: `crc_base<CRC, POLY, INIT, XORO, INRE, OURE>` makes the polynomial, the initial value, the output xor and the input/output reflection all compile-time parameters, and `CRC_32` and `CRC_32C` are just two sets of them. The lookup table is built lazily on first use by `static const bool initialized = [] { init(); return true; }();`.
+- **SHA-1 / SHA-256 have a hardware path**: after probing for SHA-NI they run `__m128i` instructions (holding the round constant table and the mask table), and otherwise fall back to the pure software implementation; `hardcal()` lets the caller ask which of the two is in use.
+- **One factory**: the algorithms self-register into the `verify` factory through `alx::product`, `list()` gives the registered names, and `create(enum)` / `create(name)` are the two ways in.
+
+---

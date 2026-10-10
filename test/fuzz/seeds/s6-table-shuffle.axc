@@ -24,7 +24,7 @@ var scores = [];
 for (var r : rows) { $vec_push(scores, float(r[3])); }
 $vec_sort(scores);
 var botN = scores[0,3];
-// A slice is read-only, so this reverses a copy: rows keeps its order (the pair is still probed)
+// A slice read is a copy, so this reverses the copy: rows keeps its order (the pair is still probed)
 $vec_reverse(rows[2,5]);
 // Build report
 var report = ["=== Full Table ===", "Name   Dept      Salary   Score"];

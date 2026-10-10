@@ -91,6 +91,8 @@ namespace alx {
         anyptr& operator=(const anyptr& _other) {
             if (this == &_other) return *this;
             release();
+            // release() keeps the old fields; a throw from cpy must not leave them to the destructor
+            m_hdl = ptrpkg{};
             copy_from(_other);
             return *this;
         }

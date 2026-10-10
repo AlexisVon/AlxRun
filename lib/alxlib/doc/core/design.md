@@ -87,65 +87,19 @@ The reason is that the signatures are **the same shape with a different meaning*
 - One `uint_16` argument: for lz4 it is `_speed` (`include/alxcore/acompress.h:37`: 1 = best ratio, higher is faster), for gzip/zstd it is `_level` (1 = fastest, higher is better), **the opposite direction**. In a base class it could only be called `_param`, with a note that "the direction depends on the codec".
 - `clear()` / `reset()` have the same shape with a different meaning: all three **cut the dictionary** (lz4's `LZ4_resetStream_fast` drops the dictionary reference, zstd opens a new frame, gzip's `deflateReset`), and each keeps only the buffers and parameters it has already allocated.
 
-The same judgement has a precedent in the `regex` pair (`doc/core/design.md` §13.1): two concrete classes plus a gtest `static_assert` pinning "same names, same shapes", with **capability differences deliberately kept out of the common contract** -- "writing them into a base class sets a limit that does not take effect, a silent trap, while a host programming against the base class automatically loses" those capabilities. Should a caller that picks by codec id ever turn up (an archive opening a codec slot, a host configuration entry), the cheapest shape is **an enum plus dispatch** (or a `name → function` table on the host side), still not inheritance.
+The same judgement has a precedent in the `regex` pair (`doc/core/design.md` §12.1): two concrete classes plus a gtest `static_assert` pinning "same names, same shapes", with **capability differences deliberately kept out of the common contract** -- "writing them into a base class sets a limit that does not take effect, a silent trap, while a host programming against the base class automatically loses" those capabilities. Should a caller that picks by codec id ever turn up (an archive opening a codec slot, a host configuration entry), the cheapest shape is **an enum plus dispatch** (or a `name → function` table on the host side), still not inheritance.
 
 ---
 
-## 3. Encryption (AES)
+## 3. Encryption and digest
 
-### 3.1 The three-layer structure
+**Moved (2026-10-09)**: AES and the digest/checksum family have no dependency on the OS or on any
+third-party code, so they were demoted to `alxbase` — see `doc/base/design.md` §10 and §11 (AES,
+digest). What stays here is `fpacker`, the archive that builds on them.
 
-```
-aes_base          the algorithm core: key expansion, the round functions, GHASH, padding (stateless, pure functions)
-  └ aes<128|192|256>   holds round_key, defines key_len / round_num
-      └ aes_iv<...>        adds the IV and its backup (for reset)
-          ├ aes_cbc
-          └ aes_ctr
-      └ aes_gcm            carries its own counter/ghash state, protected inheritance (the core stays hidden)
-```
+## 4. Archive format (fpacker)
 
-A work mode is **a template plus virtual functions**: the bit size is fixed at compile time (`key_exp_size` is a constant, `round_key` an on-stack array, with no heap allocation) and the mode lives in the polymorphic layer.
-
-### 3.2 The soft / hard dual implementation
-
-`cipher` / `inv_cipher` / `ghash` each come in a `_soft` and a `_hard` version, and each probes the CPU's capabilities at run time to pick one (`aes_base::hardcal()` reports AES-NI alone; GHASH is decided by a separate PCLMULQDQ probe). `TRY_AES_HARD` controls whether the hard path and the 16-byte aligned key array are enabled at all; with it off both probes can only answer false and every `_hard` entry point is an empty body.
-
-**GHASH's hard path computes in the reflected domain**: GCM numbers a block's bits from left to right, the leftmost being the coefficient of `y^0`; reversing the bit order of every byte (leaving the byte order alone) turns it into the plain polynomial "bit `q` is the coefficient of `y^q`", with the same sparse modulus as before, `y^128 + y^7 + y^2 + y + 1` -- the 128x128-bit product is assembled with PCLMULQDQ, and the high 128 bits fold back into the low ones with two passes of a multiplication by `0x87`. Both the reflection and its inverse happen inside `ghash_mul_hard`, so the two hardware entry points are semantically word-for-word identical to `ghash_soft` / `ghash_mul_soft`; they are **private**, like the `cipher_impl_hard` family, and reachable only through the self-probing `ghash()` -- a public entry point cannot carry a precondition such as "the CPU must have PCLMULQDQ" that the caller has no way to check.
-
-> Why the reflected subkey is not cached in `aes_gcm`: each GHASH block is one serial dependency chain (XOR → multiply → reflect), and the subkey reflection is unrelated to that chain, so out-of-order execution hides it inside the multiply's latency -- measured, with GCM's present serial usage there is **no difference**, and only reshaping the interleaving into a throughput-bound form could pay it back (and that account should be settled together with the power table for `H`).
-
-### 3.3 The semantics of the padding modes
-
-`buf_padding` / `buf_unpadding` are **public API** (brought in with a `using` in `aes<N>`), because the caller needs to pad before encrypting and strip after decrypting.
-
-| Mode | What is padded |
-|---|---|
-| `PKCS7` | every byte is the pad length |
-| `ZEROS` | fills 0, **nothing appended when already aligned** |
-| `ANSIX923` | the first n-1 bytes are 0 and the last byte is the length; a whole block is appended when already aligned |
-| `ISO10126` | this implementation fills `0xff` (the standard asks for random) and the last byte is the length; a whole block is appended when already aligned |
-
-> Revision log: `ANSIX923` / `ISO10126` originally padded nothing when "already aligned", while unpadding still stripped by the last byte -- **one implementation contradicting itself** (an aligned buffer's last byte is data itself, so any value below 16 was mis-stripped). Both now "always append a whole block", as the standards say. There is no reliable consistency in old ciphertext worth migrating.
-
-### 3.4 The CTR and GCM counters
-
-`aes_ctr` is a **stream**: `iv_index` records the offset inside the current block and carries across several `xcrypt` calls; the counter is incremented as one big-endian number (the carry walks from the last byte backwards). `encrypt` / `decrypt` share `xcrypt`.
-
-`aes_gcm` keeps J0 / the counter / the GHASH state in the object; the three-part `start(aad)` → `encrypt`/`decrypt` → `finish(tag)` guarantees that both the AAD and the ciphertext go into GHASH, and `finish` runs `reset()` on its way out (so the object is reusable).
-
----
-
-## 4. Digest
-
-- **CRC is parameterized by template**: `crc_base<CRC, POLY, INIT, XORO, INRE, OURE>` makes the polynomial, the initial value, the output xor and the input/output reflection all compile-time parameters, and `CRC_32` and `CRC_32C` are just two sets of them. The lookup table is built lazily on first use by `static const bool initialized = [] { init(); return true; }();`.
-- **SHA-1 / SHA-256 have a hardware path**: after probing for SHA-NI they run `__m128i` instructions (holding the round constant table and the mask table), and otherwise fall back to the pure software implementation; `hardcal()` lets the caller ask which of the two is in use.
-- **One factory**: the algorithms self-register into the `verify` factory through `alx::product`, `list()` gives the registered names, and `create(enum)` / `create(name)` are the two ways in.
-
----
-
-## 5. Archive format (fpacker)
-
-### 5.1 Layout
+### 4.1 Layout
 
 ```
 [FILE_HEAD:4][cmps_flag:4][aes_flag:4]   fixed header (three magic / flag slots)
@@ -156,18 +110,18 @@ A work mode is **a template plus virtual functions**: the bit size is fixed at c
 
 - Magics: `FILE_HEAD = 0x5F415A4C`, `FILE_TAIL = 0x5F455942`; the flag slots take `FILE_CMPS` (compressed) / `FILE_AESC` (encrypted) / `FILE_NONE`.
 - **The flags sit in dedicated header slots**, so "is it encrypted / compressed" is decided before the fsys is parsed (`decoder::is_encrypt` / `is_compress` read the first 8 bytes directly), without decoding the whole archive.
-- **The encryption parameters**: AES-CTR, with the key derived from the password by a single SHA-256 and the IV the pair (compressed length, offset in the archive). The properties, premises and boundaries are in §5.4.
+- **The encryption parameters**: AES-CTR, with the key derived from the password by a single SHA-256 and the IV the pair (compressed length, offset in the archive). The properties, premises and boundaries are in §4.4.
 - **The fsys index uses varsolid**: the file tree is itself a `varmap` and the serialization rules reuse base's framework, so `decoder::fsystem()` hands out a navigable `varmap` directly.
 
-### 5.2 Interruptibility and progress
+### 4.2 Interruptibility and progress
 
 Every block boundary of packing and unpacking checks the `abort_` flag (an external `bool*`), and raising it returns `forceabort` as early as possible. Progress is reported through the `print_rtmsg_` callback (`path`, the total size of the entry being processed, how much of it is done; on failure the convention is `-1, errcode`).
 
-### 5.3 Defensive parsing
+### 4.3 Defensive parsing
 
-The decode side treats an archive as **untrusted input** and validates its structure: parsing a block index requires at least 3 slots both at the outer and at the inner level (`badblock` otherwise), a data segment's length is checked against the length claimed, and the tail magic is checked. Historically the block index was only tested with `empty()`, which let `block_mesgs[2]` run out of bounds. The security properties and premises are in §5.4.
+The decode side treats an archive as **untrusted input** and validates its structure: parsing a block index requires at least 3 slots both at the outer and at the inner level (`badblock` otherwise), a data segment's length is checked against the length claimed, and the tail magic is checked. Historically the block index was only tested with `empty()`, which let `block_mesgs[2]` run out of bounds. The security properties and premises are in §4.4.
 
-### 5.4 Security model
+### 4.4 Security model
 
 **Scope**: this section applies only with **compression and encryption both on**. The other settings (compression only / encryption only / neither) are file-archiving features with no security claim -- with encryption off there is no confidentiality to speak of, and with compression off a blind edit faces the CRC as its only check, the decompression filter being gone.
 
@@ -195,7 +149,7 @@ Threat model: **the adversary has no key but can obtain and modify the archive**
 
 ---
 
-## 6. Image
+## 5. Image
 
 - **One abstraction plus a depth template**: `image_base` provides width/height, row bytes, the buffer and the codecs; `image<1|4|8|16|24|32>` provides the pixel access. The pixel representation is specialized by depth: 1/4-bit are **bit fields** (`pixel<1>` uses one bit, `pixel<4>` a nibble), 16-bit is 5-6-5, and 24/32-bit is packed BGRA.
 - **Row alignment**: a BMP row is aligned to 4 bytes (`align_line_bytes`); `line_bytes()` is the row width including padding and `usfu_line_bytes()` the useful width without it, the difference being the padding at the end of the row.
@@ -204,7 +158,7 @@ Threat model: **the adversary has no key but can obtain and modify the archive**
 
 ---
 
-## 7. Database
+## 6. Database
 
 - **`sqlite` and `stmt` are both movable, non-copyable handles**: a move transfers the `db` / `stmt` pointer and nulls the source.
 - **`stmt` does not own the `sqlite`**, holding a bare pointer instead: that is the convention "a statement derives from the connection and its lifetime is necessarily shorter", traded for zero overhead. The release order across the two objects is the caller's guarantee.
@@ -212,9 +166,9 @@ Threat model: **the adversary has no key but can obtain and modify the archive**
 
 ---
 
-## 8. Concurrency facilities
+## 7. Concurrency facilities
 
-### 8.1 Thread pool
+### 7.1 Thread pool
 
 `threadpool` = a work queue + N worker threads + an `in_flight` count:
 
@@ -222,7 +176,7 @@ Threat model: **the adversary has no key but can obtain and modify the archive**
 - `wait_until_empty()` waits for the queue to empty, `wait_until_nothing_in_flight()` for "the queue is empty and no task is still executing" (the latter is for "after submitting a batch, confirm that all of it is done");
 - **The constructor arguments are clamped**: `_threads == 0` → 1 (otherwise the pool has no worker and tasks never run), `_queue_limit == 0` → 1.
 
-### 8.2 `safe_queue`'s shutdown semantics
+### 7.2 `safe_queue`'s shutdown semantics
 
 The design points of `destroy()`:
 
@@ -231,15 +185,15 @@ The design points of `destroy()`:
 
 The reason: a condition variable's notification **does not queue** -- the waiter has to hold the lock, check the predicate and only then go to sleep. If "set the flag" and "drain the queue" took the lock twice, a waiter could pass the predicate check after the former and before the latter, go to sleep, and then neither see the queue non-empty nor receive a notification (the flag was already set), hanging for good. Merging the critical sections removes that window.
 
-### 8.3 `safe_map`'s ownership
+### 7.3 `safe_map`'s ownership
 
 `safe_map` stores `T*` and **owns** them: destruction, replacement and removal all `delete`. The `call()` family invokes the member function **under the read lock** -- so a member function must not write to that map (it would deadlock against itself).
 
 ---
 
-## 9. Logger
+## 8. Logger
 
-### 9.1 The two-level structure
+### 8.1 The two-level structure
 
 ```
 log_property   the global format (time / thread / level / head line)
@@ -249,19 +203,19 @@ logger         holds a property + a list of appenders
 
 `logger::log` first assembles the prefix from the property, then hands the record to every appender whose level it passes.
 
-### 9.2 The async appender
+### 8.2 The async appender
 
 With `is_async` on, the `file` appender's producer only pushes strings into `out_queue` (bounded by `queue_limit` and blocking when full) while a worker thread of its own consumes them and writes them out. At the end (in the destructor) **the queue is swapped out under the lock** and then written in one go -- avoiding a race with a producer that is still pushing.
 
 > Revision log: a `queue_limit` of 0 (or the key absent) blocked every producer for good, and is now clamped to 1024; `is_stop` became an atomic (the worker reads it outside the lock).
 
-### 9.3 The global logger's lazy initialization
+### 8.3 The global logger's lazy initialization
 
 The fast path of `global_logger::log` is "read the atomic function pointer / read the atomic logger pointer", and when neither is there it **races to build the default logger with a CAS**: a thread that loses the race frees its own copy and returns the winner's pointer. That way "the first log record, concurrently" creates neither two default loggers nor a leak.
 
 ---
 
-## 10. Fiber
+## 9. Fiber
 
 - **The platform implementations are separate**: POSIX uses `ucontext` (`getcontext` / `makecontext` / `swapcontext`) and Windows uses `ConvertThreadToFiber` / `CreateFiberEx` / `SwitchToFiber`. The interface is exactly the same.
 - **Stack management**: the POSIX side `mmap`s "the stack plus one guard page at the bottom" (`PROT_NONE`), so an overflow as the stack grows downwards faults at once with a `SIGSEGV`; **`malloc` + `mprotect` cannot be used** -- after `free` that page is still unwritable while the allocator has already taken it back as usable memory, and the next allocation to get that chunk crashes outright. The Windows side lets `CreateFiberEx` manage commit/reserve and grow it automatically.
@@ -270,15 +224,15 @@ The fast path of `global_logger::log` is "read the atomic function pointer / rea
 
 ---
 
-## 11. Cache
+## 10. Cache
 
 `cache` is the abstract interface (`put` / `get` / `remove` / `clear` plus a capacity), the concrete implementations register with `factory` by name, and `cache_pool` is the container of named caches, offering the "fill a miss with the factory" semantics of `get(entity, key, out, factory)`.
 
 ---
 
-## 12. Platform layer
+## 11. Platform layer
 
-### 12.1 Running external commands
+### 11.1 Running external commands
 
 The structure of `exec_sync` is the classic `pipe` + `fork` + `dup2` + `execl("/bin/sh", "-c", cmd)`:
 
@@ -287,7 +241,7 @@ The structure of `exec_sync` is the classic `pipe` + `fork` + `dup2` + `execl("/
 - **every fd close point collapses into the one `RET:` label** (`pipefd` initialized to `{-1, -1}` as the sentinel), so no error path misses one; the Windows branch does the same thing with `hWritePipe = NULL`.
 - both stdout and stderr are `dup2`-ed onto one pipe, so `output` is the two of them merged (the order is not guaranteed).
 
-### 12.2 Shared memory
+### 11.2 Shared memory
 
 `mmap` wraps "named shared memory + cross-process exclusion": POSIX with `shm_open` + `mmap` + a named semaphore, Windows with `CreateFileMapping` + `MapViewOfFile` + a named mutex. Every read and write interface locks internally, `cas` is a single-byte compare-and-swap, and `take` is "read and zero" (for taking an item out of a queue-shaped shared memory).
 
@@ -299,7 +253,7 @@ The structure of `exec_sync` is the classic `pipe` + `fork` + `dup2` + `execl("/
 
 **An attacher's `close()` used to remove the name**: the old `close()` ran `shm_unlink` unconditionally for every instance, so in a "create once, attach repeatedly from many processes" use the first attacher to exit removed the name and every later `open(..., false)` failed (measured on a downstream host: the first request worked, the second onwards failed). The companion semaphore was only ever `sem_close`-d and never `sem_unlink`-d, so every change of name left one `sem.<name>_sem` behind in `/dev/shm` (56 sessions in a day left 56). Both are eliminated by this lifetime model.
 
-### 12.3 Process control (`process_ctrl`)
+### 11.3 Process control (`process_ctrl`)
 
 `process_ctrl` runs one child process over pipes + `fork`/`execv` (Windows using `CreatePipe` + `CreateProcessW`), and a `loop()` thread delivers its stdout/stderr as **raw blocks** into `sig_output`/`sig_errput` -- one `read()` of at most 4096 bytes, **not split into lines**: several lines or half a line may turn up in one callback, the trailing `\n` included as it stands.
 
@@ -315,7 +269,7 @@ Killing and reaping have a single stance:
 - **The single-thread model**: one instance belongs to one calling thread -- the library adds no lock, and concurrent `status()` / `wait()` / `kill()` / `input()` on one instance fight each other (two threads reaping at once). Across instances there is no shared state, each carries its own `loop()` thread, and concurrency is free; locking multi-threaded access to one instance is the caller's job.
 - **Windows difference**: the `signaled` / `term_sig` fields do not exist on that platform (there are no signals to report); `kill()` uses `TerminateProcess(…, 1)`, so `exit_code == 1` cannot be told apart from "the child ran `exit(1)` itself"; the reaping goes through `WaitForSingleObject` + `GetExitCodeProcess` and only then `CloseHandle` (once the handle closes, the exit code is out of reach for good).
 
-### 12.4 Process info (`process_info`)
+### 11.4 Process info (`process_info`)
 
 Only five fields are exposed: `pid` / `ppid` / `thread_cnt` / `base_priority` / `path`. **The process name is no longer stored** -- the caller splits it with `file_info(path).name()` (`file_info::name_` is a plain string split, computed outside the `exist_` test, so a path that does not exist still gives a value).
 
@@ -325,7 +279,7 @@ Only five fields are exposed: `pid` / `ppid` / `thread_cnt` / `base_priority` / 
 - **`/proc/<pid>/stat` is read whole and then parsed**, anchoring on the **last** `')'` to take the fields after it: `comm` may hold spaces, right brackets and even newlines (writing `/proc/self/comm` does not strip a trailing newline, so a bare `\n` lands in the stat line and reading line by line truncates it to `pid (comm`).
 - **Narrow strings + the Windows A-version APIs**, the same stance as `file` / `file_info` (see `notice.md`: A = the system ANSI code page).
 
-### 12.5 Process limits (`process_limits`)
+### 11.5 Process limits (`process_limits`)
 
 The limits of `start(args, limits)` are **all or nothing**: if any one guarantee asked for cannot be made, the child is not started and `start()` returns `false`.
 
@@ -337,31 +291,31 @@ The limits of `start(args, limits)` are **all or nothing**: if any one guarantee
 
 ---
 
-## 13. Regex (PCRE2)
+## 12. Regex (PCRE2)
 
-### 13.1 Why two engines rather than one abstract base class
+### 12.1 Why two engines rather than one abstract base class
 
 `regex_ex` (base) is nailed to `std::regex`: standard library only, which is how base stays dependency-free; the price is that its **cost has no bound** and no interrupt can be inserted (`<regex>` has neither a step knob nor a callback point). To fix "no bound" the engine has to change, and base's "zero dependencies" is a documented property that must not be broken for it.
 
 So it splits into two concrete classes with no virtual base: `regex_ex` stays in base untouched (it serves trustworthy input) and `regex_pcre2` lands in core (which already has the 3rdpty convention of zlib / lz4 / sqlite3 / jpeg). Their common contract is only "same names, same shapes" -- 7 matching methods plus `is_valid` / `get_pattern`, pinned one by one by a `static_assert` in the gtest (`std::is_same_v` compares the member pointer types on the two sides, so either side drifting fails to compile). **Boundedness and interruption are deliberately kept out of any public contract**: `std::regex` cannot deliver them, so writing them into a base class would be the silent trap of "a limit is set and does not take effect", and a host programming against the base class automatically loses both.
 
-### 13.2 AUTO_CALLOUT is mandatory
+### 12.2 AUTO_CALLOUT is mandatory
 
 The constructor always passes `PCRE2_AUTO_CALLOUT`: the callout items are inserted into the pattern at **compile time**, and `set_callout()` only hangs a callback on the match context. Without them compiled in, a later `set_callout()` reports no error and is never called -- the host holds an interrupt hook that has silently stopped working, which is worse than having no hook at all.
 
-### 13.3 What a callout's return value means
+### 12.3 What a callout's return value means
 
 `pcre2callout.3:379-389`: returning `0` continues; **`> 0` fails only the current position** (equivalent to a failed lookahead assertion), leaving the other possibilities to be tried; **`< 0` abandons the whole match** and returns that negative value as it stands. `PCRE2_ERROR_CALLOUT` is left for the callout itself to return (PCRE2 never uses it internally). So when the host says "stop", the bridge returns `-37`, not `1`.
 
 A measured comparison (taken this time with a one-off probe calling the PCRE2 C API directly): returning `1` makes the engine keep trying up to 1029 times and finally report `NOMATCH` -- disguising "it was stopped" as "nothing matched"; returning `-1` abandons the whole match but reports `NOMATCH` (a disguise as well); only `-37` travels all the way to the host and maps to `interrupted`. That chain is permanently pinned by `callout_interrupts_a_running_match` in `gtest/alxcore/src/gt_aregex_pcre2.cpp`.
 
-### 13.4 The caps and their defaults
+### 12.4 The caps and their defaults
 
 The step cap is written into the match context (`pcre2_set_match_limit`). `0` means "back to the engine default", implemented by querying `pcre2_config(PCRE2_CONFIG_MATCHLIMIT)` right there and writing it back, **not by hard-coding 10⁷** (so a library upgrade cannot quietly start lying). The depth cap works the same way (its factory default is the step cap's value). PCRE2's JIT is not in the library -- the build leaves `--enable-jit` at its default (off) -- and `pcre2_jit_compile` is never called: the present behaviour is the interpreter's and is predictable. (A JIT run would start with rebuilding PCRE2 with `--enable-jit` and calling that entry.)
 
 PCRE2's own "required bytes" pre-scan incidentally took care of that original 165 s repro: `(a+)+b` against 30 `a`s backtracks not one step (not even a 1000-step budget is touched). What the step cap really has to hold back is what the pre-scan cannot cut, such as `^(a+)+$` against 30 `a`s plus `!`.
 
-### 13.5 Concurrency: one apiece, the hook to the instance
+### 12.5 Concurrency: one apiece, the hook to the instance
 
 Only the read-only part can be shared across threads: the compiled result (`pcre2api.3:576-580`) and a match context that is not modified (`:654-657`). **The match block is a hard one-per-thread constraint** (`:663-667`, "Each thread must provide its own copy of this memory"), and `status_` / `last_err_` are written during a match -- so one instance can only belong to one execution agent: methods on one instance must not run concurrently, and neither may a setter run concurrently with a match (`set_callout` being a use-after-free: it frees the old binding, and that is what the bridge of the running match reads).
 
@@ -369,9 +323,9 @@ Only the read-only part can be shared across threads: the compiled result (`pcre
 
 One measured number along the way: were it changed to "build a fresh match block per call" to open up same-object concurrency, the cost would be **+30 ns per call** (+52~63% on a small pattern and a short subject), and it would **still not settle the hook's ownership** -- that needs the hook turned into a per-call argument, which is an interface-generation change. So this is not done.
 
-**The library adds no lock and does no detection** (the same stance as `process_ctrl`: one instance does not run concurrently, across instances concurrency is free): the consequences of a concurrent call are the caller's to bear. All of this is written down in the header, in `api.md` §16 and in `notice.md`.
+**The library adds no lock and does no detection** (the same stance as `process_ctrl`: one instance does not run concurrently, across instances concurrency is free): the consequences of a concurrent call are the caller's to bear. All of this is written down in the header, in `api.md` §14 and in `notice.md`.
 
-## 14. Revision log (behaviour changes that touch the design)
+## 13. Revision log (behaviour changes that touch the design)
 
 | Topic | Change | Reason |
 |---|---|---|
@@ -409,4 +363,4 @@ One measured number along the way: were it changed to "build a fresh match block
 | `process_info` | the `name` field (a wide string, from `comm`/`szExeFile`) becomes `path` (a narrow string, the real exe); `find_process(name)` matches on `basename(path)`; `current()` added | `comm` is truncated to 15 characters and can be forged with `PR_SET_NAME`, and `/proc/<pid>/stat` cannot be read line by line because comm may contain newlines; the path is the stable identity |
 | platform-layer strings | `process_info` / `process_ctrl` / `dll_version` all move to narrow strings + the Windows A-version APIs | unifies the existing stance of `file` / `file_info`, and POSIX no longer does pointless wide/narrow conversions |
 | `process_ctrl::start` | gains a `limits` argument (memory wall / parent death) and does not start unless every item holds; `start()` becomes synchronous (returning means `exec` has happened) and reports an `exec` failure as well | a cap has to be imposed by the **parent** and "not capped" has to mean "not started"; the status pipe does away with the fork/exec window along the way |
-| regex | new `regex_pcre2` (core, PCRE2 10.48: step cap + callout interrupt); `regex_ex` stays in base untouched | see §13: `std::regex`'s cost has no bound and cannot be interrupted, and base's zero-dependency stance cannot be given up |
+| regex | new `regex_pcre2` (core, PCRE2 10.48: step cap + callout interrupt); `regex_ex` stays in base untouched | see §12: `std::regex`'s cost has no bound and cannot be interrupted, and base's zero-dependency stance cannot be given up |

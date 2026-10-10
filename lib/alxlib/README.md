@@ -6,8 +6,8 @@ A general-purpose C++ library (C++11 and later): data types, cryptography, compr
 
 | Module | Responsibility | Depends on |
 |------|------|------|
-| **alxbase** | basic types (bytes/variant), serialization, JSON/XML/CSV, string utilities, factory pattern | none |
-| **alxcore** | file I/O, crypto (AES), compression (LZ4/Gzip/zstd), SQLite, images, thread pool, logger, fiber | alxbase |
+| **alxbase** | basic types (bytes/variant), serialization, JSON/XML/CSV, string utilities, factory pattern, crypto (AES), digest/checksum, date/time | none |
+| **alxcore** | file I/O, compression (LZ4/Gzip/zstd), SQLite, images, thread pool, logger, fiber | alxbase |
 | **alxscpt** | script engine (lex → parse → compile → execute) | alxbase, alxcore |
 | **alxcomm** | communication: TCP/UDP transport, HTTP server/client, RPC framework | alxbase, alxcore |
 

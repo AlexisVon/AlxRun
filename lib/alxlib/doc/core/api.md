@@ -1,6 +1,6 @@
 # alxcore — API Manual
 
-`alxcore` is the **middle layer** of AlxLib: file and stream, compression, encryption, digest, archive, image, database, thread pool and thread-safe containers, logger, fiber, cache, platform adaptation layer. It depends on `alxbase` and is depended on by `alxcomm` / `alxscpt`.
+`alxcore` is the **middle layer** of AlxLib: file and stream, compression, archive, image, database, thread pool and thread-safe containers, logger, fiber, cache, platform adaptation layer and regex. It depends on `alxbase` and is depended on by `alxcomm` / `alxscpt`.
 
 - Header directory: `include/alxcore/`
 - Library: `libalxcore.so` (or the merged static library `alxlib.a`)
@@ -26,7 +26,7 @@ alx::file_info info("/tmp/a.txt");
 info.is_exist();  info.is_dir();  info.is_link();  info.is_valid();
 info.path();  info.name();  info.suffix();  info.size();
 info.time_ct();  info.time_la();  info.time_lw();
-alx::file_info::conver_file_time(info.time_lw());     // → datetime
+alx::file_info::conver_file_time(info.time_lw());     // → datetime (now in alxbase, see doc/base/api.md §13)
 
 info.get_parent();                                     // the containing directory's file_info
 info.get_child("*.txt");                               // entry list (wildcards accepted)
@@ -124,67 +124,12 @@ Failure always shows up as an **empty `bytes`** (`null()` true) or `false`; noth
 
 ---
 
-## 4. Encryption (`aaes.h`)
+## 4. Encryption and digest
 
-`aes_base` provides the algorithm core and the padding helpers, `aes<bits>` is the template base class, and the work modes derive from it:
+**Moved (2026-10-09)**: AES and the digest/checksum family now live in `alxbase` — see
+`doc/base/api.md` §11 and §12.
 
-```cpp
-uint_8 key[32] = { /* ... */ };
-uint_8 iv[16]  = { /* ... */ };
-
-alx::aes_cbc<256> alg(key, iv);              // the bit size is a template parameter: 128 / 192 / 256
-alx::bytes buf = plain;
-alx::aes_base::buf_padding(buf, alx::aes_base::PKCS7);   // pad up to a whole block
-alg.encrypt(buf.data(), buf.size());                      // encrypt and decrypt in place
-
-alg.reset();                                  // put the IV / counter back (start a new session)
-```
-
-The available modes (all templates instantiated on the bit size, `aes_ctr<256>` say): `aes_ecb` (no IV), `aes_cbc` (chained), `aes_ctr` (a stream, `encrypt`/`decrypt` are the same operation), `aes_gcm` (with an authentication tag).
-
-The `PADDING` modes `NONE` / `PKCS7` / `ZEROS` / `ANSIX923` / `ISO10126` go with `buf_padding` / `buf_unpadding`; PKCS7, ANSIX923 and ISO10126 append a whole block when the buffer is already aligned (ZEROS appends nothing then).
-
-The typical use of GCM (AAD first, then the ciphertext, the tag last):
-
-```cpp
-alx::aes_gcm<256> gcm(key, iv12);
-gcm.start(aad);
-gcm.encrypt(buf.data(), buf.size());
-alx::bytes tag;
-gcm.finish(tag);          // a 16-byte authentication tag; finish resets on its way out
-```
-
-`aes_gcm` inherits `protected` -- it exposes only `encrypt` / `decrypt` / `start` / `finish` / `reset`.
-
----
-
-## 5. Digest and checksum (`averify.h`)
-
-```cpp
-alx::verify::list();                                        // the registered algorithm names
-std::string hex = alx::verify::exec(alx::verify::SHA_256, data, len);
-std::string hex2 = alx::verify::exec("sha256", bytes_view);
-
-// streaming
-alx::verify* v = alx::verify::create(alx::verify::SHA_256);  // owned by the caller
-v->update(chunk1);  v->update(chunk2);
-std::string h = v->hexdigest();
-alx::bytes  b = v->bytedigest();
-delete v;
-```
-
-The two exits have different jobs, and each has a reason to exist:
-
-- **`hexdigest()` faces outward and answers to the standards**: its value is character-for-character equal to the published vectors of the CRC RevEng catalogue and NIST FIPS 180-4 (all 22 registered algorithms have a vector in `gtest/alxcore/src/gt_averify.cpp`).
-- **`bytedigest()` faces inward and makes no conversion at all** -- which is exactly why it exists: it hands back the raw dump of the digest words (for a CRC the one word of the storage width, so the hex form is **twice** as long as it; for SHA each 32-bit state word), usable as an integer / array of numbers right away (`acomm_ex`'s message checksum reads the first `uint_32`, `res_mng`'s path key the first `uint_64`). For the standard byte order use `hexdigest()`; folding a conversion into `bytedigest()` amounts to abolishing it.
-
-The two describe one digest, and the conversion between them is pinned by `bytedigest_matches_hexdigest_word_order` (22 algorithms checked one by one against the published vectors, both exits verified).
-
-Built-in types: `NO_CHECK`, `CRC_32`, `CRC_32C`, `SHA_1`, `SHA_256` (created by enum or by name).
-
----
-
-## 6. Archive packing (`afpacker.h`, namespace `alx::fpacker`)
+## 5. Archive packing (`afpacker.h`, namespace `alx::fpacker`)
 
 Packs a directory tree into one self-describing archive: an fsys index plus the data in blocks, each block optionally LZ4-compressed and AES-encrypted.
 
@@ -213,11 +158,11 @@ dec.save("root", {}, alx::file_info("/tmp/dst"));      // onto disk; with _root 
 - Progress and error callback: `set_print_rtmsg(MesgFunc)`, signature `(path, v1, v2)`: when `v1 == -1`, `v2` is the error code; otherwise `v1` is the total size of the entry being processed and `v2` how much of it is done.
 - Interrupt: `set_abort_flag(&flag)`; raising the flag from outside returns `forceabort` as soon as possible.
 - Silent ignore: `set_igerr_notexist` / `set_igerr_linkfile` control whether "the file does not exist / is a symbolic link" counts as an error.
-- **Keeping the key unique is the caller's job**: do not pack two archives with one `password` (CTR's uniqueness requirement is on the key, not on a single archive), and salting and key stretching are the caller's job too. The full security model and its boundaries are in `design.md` §5.4.
+- **Keeping the key unique is the caller's job**: do not pack two archives with one `password` (CTR's uniqueness requirement is on the key, not on a single archive), and salting and key stretching are the caller's job too. The full security model and its boundaries are in `design.md` §4.4.
 
 ---
 
-## 7. Image (`aimage.h`)
+## 6. Image (`aimage.h`)
 
 Unified behind `image_base` (abstract), instantiated by depth as `image<1|4|8|16|24|32>`.
 
@@ -251,7 +196,7 @@ On Windows there is also `load_image_hbm(HBITMAP)`.
 
 ---
 
-## 8. Database (`asqlite.h`)
+## 7. Database (`asqlite.h`)
 
 ```cpp
 alx::sqlite db;
@@ -282,7 +227,7 @@ st.get_variant(0);  st.get_jsonval(0);    // the two packed ways of taking a val
 
 ---
 
-## 9. Thread pool (`athreadpool.h`)
+## 8. Thread pool (`athreadpool.h`)
 
 ```cpp
 alx::threadpool pool(/*threads=*/4, /*queue_limit=*/0x7FFF);
@@ -297,9 +242,9 @@ The default thread count is `max(2, hardware_concurrency())`; `_threads == 0` is
 
 ---
 
-## 10. Thread-safe containers (`athread_safe.h`)
+## 9. Thread-safe containers (`athread_safe.h`)
 
-### 10.1 Wrappers and lock macros
+### 9.1 Wrappers and lock macros
 
 ```cpp
 alx::thread_safe_mutex<std::queue<int>> q;      // container + mutex
@@ -311,7 +256,7 @@ R_THREAD_SAFE(obj);     // read lock
 W_THREAD_SAFE(obj);     // write lock
 ```
 
-### 10.2 `safe_queue` — a queue with blocking semantics
+### 9.2 `safe_queue` — a queue with blocking semantics
 
 ```cpp
 alx::safe_queue<std::function<void()>> q;
@@ -325,7 +270,7 @@ q.clear();  q.reset();  q.destroy();        // after destroy every blocking call
 
 After `destroy()` both `block_push` and `block_pop` return `false` at once and block no more -- the queue's "shutdown" semantics.
 
-### 10.3 `safe_map` — a pointer container that forwards method calls
+### 9.3 `safe_map` — a pointer container that forwards method calls
 
 ```cpp
 alx::safe_map<std::string, worker> pool;
@@ -339,7 +284,7 @@ int n = pool.call("a", ok, &worker::size);  // calls the member function under t
 
 ---
 
-## 11. Logger (`alogger.h`)
+## 10. Logger (`alogger.h`)
 
 ```cpp
 // the global default logger (built lazily, writing to cout by default)
@@ -370,7 +315,7 @@ The log object is a `log_wapper<LEVEL>` temporary; `operator<<` appends to its b
 
 ---
 
-## 12. Fiber (`afiber.h`)
+## 11. Fiber (`afiber.h`)
 
 User-space cooperative scheduling (POSIX with `ucontext`, Windows with Fibers):
 
@@ -391,7 +336,7 @@ alx::fiber::deinitialize();
 
 ---
 
-## 13. Cache (`acache.h`)
+## 12. Cache (`acache.h`)
 
 ```cpp
 alx::cache* c = alx::cache::create("cache_lru", /*capacity=*/1024);
@@ -412,9 +357,9 @@ The implementations register by name; there are three: `cache_fifo` / `cache_lru
 
 ---
 
-## 14. Platform layer (`aplatform.h`)
+## 13. Platform layer (`aplatform.h`)
 
-### 14.1 Running external commands
+### 13.1 Running external commands
 
 ```cpp
 alx::exec_result r = alx::exec_sync("ls -l", /*timeout_ms=*/500);
@@ -427,7 +372,7 @@ std::future<alx::exec_result> fut = alx::exec_async("gcc -v", 2000);
 
 The timeout puts the child in its own process group and sends `SIGTERM` to that whole group.
 
-### 14.2 Shared memory
+### 13.2 Shared memory
 
 ```cpp
 alx::mmap shm("my_shm");
@@ -461,7 +406,7 @@ Cross-process exclusion uses a named semaphore (POSIX) / a named mutex (Windows)
   only when the last handle closes ⇒ with the creator gone first the name is still there (on Linux it
   disappears at once). One API on both sides, only the moment the name goes differs.
 
-### 14.3 Process
+### 13.3 Process
 
 ```cpp
 alx::process_info self = alx::process_info::current();   // this process
@@ -507,21 +452,7 @@ Killing and reaping:
 
 ---
 
-## 15. Time (`adatetime.h`)
-
-```cpp
-alx::datetime now = alx::datetime::current();
-alx::datetime t(2026, 9, 11, 12, 30, 0);
-now.to_string();
-now.add_seconds(60);  now.add_milliseconds(500);  now.add_microseconds(1);
-alx::datetime timer;  timer.start();  timer.elapsed_ms();   // timing
-```
-
-`datetime` is based on `system_clock` (the wall clock, the same source as `to_time_t` / file times), `start()` takes the reference point again, and `elapsed_ms()` returns the milliseconds since it -- the typical use is timing between two points. Note that the wall clock can **jump** under NTP or a manual adjustment; for a strictly monotonic duration use `std::chrono::steady_clock` instead.
-
----
-
-## 16. Regex (`aregex_pcre2.h`)
+## 14. Regex (`aregex_pcre2.h`)
 
 A regex on the PCRE2 backend: **a single match has a ceiling, and the host can stop it mid-flight**. A different animal from base's `regex_ex` (`std::regex`, with no bound on its cost); pick between them by whether the input is trustworthy:
 

@@ -47,3 +47,7 @@ No open defects at present.
 
 - **`strutil::split` with an empty delimiter cuts into single bytes**: it returns `len + 2` elements (one empty element before the first and after the last, one per byte in between), not an empty list.
 - **The `regex_ex` copy assignment is `noexcept`**: assigning the internal `pattern` can in theory throw `bad_alloc`, which then terminates (vanishingly unlikely, left as it is).
+
+## Encryption and digest
+
+- (moved from alxcore, 2026-10-09) **The AES padding semantics changed, so old ciphertext is not guaranteed to unpad under the new rules**: `ANSIX923` and `ISO10126` now **always** append a whole block, an already aligned buffer included, and unpadding accepts `pad_len == 16` accordingly. The old version appended nothing when the buffer was aligned, so the last byte of old ciphertext is data itself; unpadding it under the new rules may strip 1..16 bytes too many. Check: the old implementation was not self-consistent (it appended nothing yet stripped by the last byte, so any last byte below 16 was mis-stripped), and there is no old format worth migrating, so no compatibility is attempted.

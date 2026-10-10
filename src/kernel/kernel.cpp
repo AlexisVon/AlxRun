@@ -150,25 +150,6 @@ namespace kernel {
         setrlimit(RLIMIT_AS, &rl);
     }
 
-    // The first node JSON cannot carry, or nullptr when the whole tree crosses: from_variant's
-    // empty value would be indistinguishable from "returned nothing" (doc/issue.md I-5).
-    static const char* unserializable(const alx::variant& _v, int _depth = 0) {
-        if (_depth > 64) return nullptr; // do not chase what a handle might point back to
-        if (_v.is<alx::anyptr>())
-            return "an opaque handle (a callable or a host object)";
-        if (_v.is<alx::varvec>()) {
-            for (const alx::variant& e : _v.to<alx::varvec>())
-                if (const char* why = unserializable(e, _depth + 1)) return why;
-        } else if (_v.is<alx::varlst>()) {
-            for (const alx::variant& e : _v.to<alx::varlst>())
-                if (const char* why = unserializable(e, _depth + 1)) return why;
-        } else if (_v.is<alx::varmap>()) {
-            for (auto it = _v.to<alx::varmap>().cbegin(); it != _v.to<alx::varmap>().cend(); ++it)
-                if (const char* why = unserializable(it.value(), _depth + 1)) return why;
-        }
-        return nullptr;
-    }
-
     // The only door for external resources (design.md §2): a rejection is an uncatchable interrupt,
     // and desc tells the model why.
     static bool gate(alx::script::hook_info& _info) {
@@ -278,27 +259,26 @@ namespace kernel {
             // Convert and release in one breath: the variant can be another wall-sized structure,
             // and an interrupted or over-wall run carries no value -- the branches need diag only.
             if (res.error == alx::script::error_type::NoError) {
-                if (const char* why = unserializable(rst.value)) {
-                    // The run itself was fine -- say why its value cannot come back.
+                // A result holding a handle is refused inside exec, so the value here is always
+                // retainable and this conversion is the whole crossing (doc/issue.md I-5).
+                try {
+                    res.value = alx::json_value::from_variant(std::move(rst.value));
+                    res.has_value = true;
+                } catch (const std::bad_alloc&) {
+                    // The conversion hit the wall; same face as every memory refusal -- a
+                    // silently null value would read as "the script returned nothing".
+                    res.error = alx::script::error_type::MemoryError;
+                    res.diag = "memory budget exceeded — the run is capped at " + limit_mb() +
+                               " MB of address space\n";
+                } catch (...) {
+                    // Unreachable while the library keeps its word; named all the same, so a
+                    // breach cannot read as "the script returned nothing".
                     res.error = alx::script::error_type::ConvError;
-                    res.diag = std::string(
-                                   "the script ran to the end, but its value cannot be returned: it holds ") +
-                               why + " — nothing crosses into JSON, so no value came back\n";
-                } else {
-                    try {
-                        res.value = alx::json_value::from_variant(std::move(rst.value));
-                        res.has_value = true;
-                    } catch (const std::bad_alloc&) {
-                        // The conversion hit the wall; same face as every memory refusal -- a
-                        // silently null value would read as "the script returned nothing".
-                        res.error = alx::script::error_type::MemoryError;
-                        res.diag = "memory budget exceeded — the run is capped at " + limit_mb() +
-                                   " MB of address space\n";
-                    } catch (...) {
-                        // Unserializable value (handle in the tree) -- report, keep the process alive.
-                        res.diag += "return value is not serializable\n";
-                    }
+                    res.diag = "return value is not serializable\n";
                 }
+            } else if (res.diag.empty() && rst.value.is<std::string>()) {
+                // The exec-exit refusal hands its text back in the value, never on_cerr.
+                res.diag = rst.value.to<std::string>() + "\n";
             }
         } // the variant, and the run's whole state with it, are gone by this line
         e->reset();

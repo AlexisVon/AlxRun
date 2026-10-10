@@ -39,6 +39,8 @@ The engine ships with **no IO and no extension functions**: `print`, file access
 
 ```cpp
 alx::script::engine_config cfg;
+cfg.etype       = "";          // compatibility tag stamped into every product (see §7)
+cfg.vtype       = 0;           // extension counter stamped into every product, 0 = gate off
 cfg.max_stack   = 1024;        // live frames allowed, 0 = unlimited
 cfg.max_vecfill = 0;           // elements one vec/lst fill may produce, 0 = unlimited
 cfg.parse_depth = 1024;        // syntax nesting depth of one parse, 0 = unlimited
@@ -76,6 +78,8 @@ The three fields of `result`:
 
 `home_dir` is **the base relative imports resolve against**, and the anchor of the module namespace.
 
+Only retainable data may leave `exec()`: a result that holds an object handle — an `anyptr` (a module instance, a host object) or a container holding one — is refused; `error` comes back as `TypeError` (`exec result: <type> cannot be returned`, the name `type()` reports), the value is released and the engine reset. The gate reports through `result` alone — no `on_cerr` line. An `exec()` value is safe to keep indefinitely — its lifetime is the host's.
+
 ### 3.2 Calling a script function
 
 ```cpp
@@ -83,6 +87,8 @@ alx::script::engine::result call(const std::string& _name, const varvec& _args);
 ```
 
 Calls the `def` of that name in the **root scope** (no module path is resolved), passes the arguments as values, and returns the same shape as `exec`.
+
+Unlike `exec()`, `call()` has **no result gate** — a value holding an object handle comes back whole: the unrestricted channel for complex C++ & script work (dynamic object construction and the like). Its contract flips: such a value references the engine's world and must be dropped before the engine dies — and before any failed run, which resets the engine (a handle's instance lives in the run's world that the reset drops). The same holds for handles read back through `load()`, whose pointer is additionally invalidated by any root-variable addition and by any reset.
 
 ### 3.3 Compiling into a product
 
@@ -140,7 +146,7 @@ void set_type_ex(type_ex _fn, void* _ud = nullptr);
 
 `type()` has two dead-end answers: an object a host handed over, and a variant type the script layer does not model (a 32-bit float, an unsigned integer, a `std::vector<T>`). Both go to this callback when one is installed — null or an empty answer means the host does not know it either, and `"unknown"` stands, which is also the answer with no callback at all; passing null removes the callback.
 
-The callback runs on the thread that executes the script, and the engine is not reentrant. The pointer it returns is read once, right after the call, and never kept — its storage has to stay valid past the return. A C++ exception it throws is reported like a native's: a script `try` can catch it as `NativeError`, and without one the run comes back as `NativeError`. The diagnostic messages that name a value (`"Expected int, got X"` and the like) never ask the callback and keep saying `"unknown"`.
+The callback runs on the thread that executes the script, and the engine is not reentrant. The pointer it returns is read once, right after the call, and never kept — its storage has to stay valid past the return. A C++ exception it throws is reported like a native's: a script `try` can catch it as `NativeError`, and without one the run comes back as `NativeError`. The diagnostic messages that name a value in a conversion (`"Expected int, got X"` and the like) never ask the callback and keep saying `"unknown"` — the `exec()` result gate does ask it, so its message carries the same name `type()` reports.
 
 ---
 
@@ -174,10 +180,11 @@ eng->set_extend("print", [](alx::script::fwrap& _fw) {
 | `size()` / `operator[](i)` | read an argument (`variant&`; a bare variable name aliases the script's variable, any other argument is a temporary; **dead once the call returns**; throws IndexError past the last argument) |
 | `freturn(v)` / `freturn()` | set the return value |
 | `raise(info, error_type)` | throw an exception the script can catch |
-| `call(func, args)` | call a script function from the native (`func` may be a function name string) |
+| `call(func, args)` | call a script function from the native (`func` may be a function name or a `.` path); the path lookup is read-only — a path that does not resolve leaves nothing behind |
+| `iload(key)` | resolve a name or `.` path in the calling scope to a **slot address or nothing** — the script-level read semantics (a `[null]` size, an element's value) do not apply here, and a shape that is not an address (a slice, an out-of-range index, a byte element, a bare name that is not there) is simply `nullptr`; the promise covers the resolved outcome — a `.` path whose intermediate step does not resolve still reports that step's error (`Undefined: <name>`, a missing map key). **The host's one slot handle, in write posture**: it hands back a writable slot, so a missing terminal map key (and a `[null]` append position) is created — write into the returned slot to bind a value; the pointer follows the engine-side `load()` rule — invalidated by any addition to the store and by any reset |
 | `bind(name, func, area)` | register a native function into an area (what a link module uses) |
-| `load/store/remove(name)` | reach the calling link instance's own data store |
-| `object()` / `unwrap<T>()` | the C++ object bound to the current area |
+| `load/store/remove(name)` | reach the calling link instance's own data store; a returned pointer follows the same rule (any addition to the store, any reset) |
+| `object()` / `unwrap<T>()` | the C++ object bound to the current area — **area natives only**: outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no area) no area is set, and calling it there is outside the contract — nothing is set to hand back |
 | `config()` | read the engine configuration (the pipe pointers included) |
 
 ---
@@ -197,11 +204,11 @@ A host constant read as `$name` (**no parentheses**). It shares the `$` namespac
 
 ## 7. Version gate
 
+`etype` / `vtype` are the first two fields of `engine_config`: read them back through `config()`, set them at creation or with the two setters below the `config()` accessor.
+
 ```cpp
 void set_etype(const std::string& _type);   // engine major version (a string)
-const std::string& etype() const;
 void set_vtype(uint_64 _ver);               // version of the supported extension set (a number)
-uint_64 vtype() const;
 ```
 
 - A compiled product carries the etype/vtype of its compile; the check on the way in is **always on** (it cannot be turned off). A plain engine that set neither skips it.
@@ -293,11 +300,11 @@ The channels are per-engine; with none set (`nullptr`) the host's default is std
 ## 10. Interrupt
 
 ```cpp
-bool running() const;        // true while an exec() is running (call() does not count)
+bool running() const;        // true while an entry runs: exec() or call()
 void set_interrupt();        // ask for an interrupt (callable from any thread)
 ```
 
-The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
+The interrupt is **cooperative**: once the request is raised it takes effect at the next checkpoint of the execution flow (the run comes back as `InterruptedError`). Every entry that runs a walk reports it the same way — `exec` and `call` alike; a request made while nothing is running is discarded (an entry clears the flag as it starts), and a run that fails during execution — an error or an interrupt — resets the engine: root variables and loaded modules are gone, the next entry starts from an empty state. The checkpoints are governed by `set_hook`'s `_interval`, but **the flag is looked at on every checkpoint** — an interval of 0 only turns `exec` events off, `set_interrupt()` still works.
 
 ---
 

@@ -26,7 +26,7 @@ namespace alx {
      * _hard and _soft variants of a primitive are picked at runtime by hardcal(); with
      * TRY_AES_HARD off the probe can only answer false and only the software code is called.
      */
-    class ALXCORE_API aes_base : public noncopyable {
+    class ALXBASE_API aes_base : public noncopyable {
     public:
         /// Side of the 4x4 state matrix; a round key is block_num 4-byte words long
         static constexpr uint_8 block_num{4};

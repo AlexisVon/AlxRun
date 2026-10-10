@@ -180,6 +180,11 @@ namespace alx {
          */
         struct engine_config {
 
+            /// Identity stamped into every compiled product; an empty one with vtype 0 leaves the gate off
+            std::string etype;
+            /// Extend-support level stamped into a product; a product newer than this is refused on the way in
+            uint_64 vtype = 0;
+
             /// Raise OverflowError instead of wrapping, on integer overflow
             bool overflow_check = false;
             /// Parse-time: insert position markers. Exec-time: record them and fire debug events
@@ -347,8 +352,9 @@ namespace alx {
             /// Leave the call without a value; the script sees an empty variant
             void freturn() { freturn(variant()); }
 
-            /// Slot of _key in the calling scope; null when the name or path resolves to nothing
-            virtual variant* nload(const std::string& _key) = 0;
+            /// Resolve _key (a name or a `.` path) in the calling scope to a slot address, or null:
+            /// the host's one slot handle, in write posture (a missing terminal key is created)
+            virtual variant* iload(const std::string& _key) = 0;
 
             /**
              * \brief Call a script function and get its value back
@@ -374,7 +380,8 @@ namespace alx {
              *
              * With an empty _area it goes into the call's data scope, which for a link entry point
              * is the instance's own store; a non-empty _area creates the area object under that
-             * name or extends the one already there. Throws NameError when _name is taken.
+             * name or extends the one already there. An existing name is replaced either way (a link
+             * copy re-runs `create` over its cloned store, so re-registration must land).
              *
              * \param _func Handler, of the same type as an extension function
              * \param _area Area to bind into, or empty for the plain scope
@@ -548,34 +555,12 @@ namespace alx {
             /// True when $name is a registered definition
             virtual bool fid_define(const std::string& _name) const = 0;
 
-            /**
-             * \brief Set the compatibility tag stamped into every compiled product
-             *
-             * exec() refuses a product whose tag differs from the engine's, so the two ends of a
-             * tag have to agree exactly; a product with no tag is refused just the same once the
-             * engine has one. Change or drop an extension and the tag has to change with it.
-             *
-             * \param _type Tag to stamp; empty together with vtype 0 leaves the gate off
-             */
-            virtual void set_etype(const std::string& _type) = 0;
-            /// The tag as stamped; empty on an engine that never set one
-            virtual const std::string& etype() const = 0;
-            /**
-             * \brief Set the numeric counter stamped into every compiled product
-             *
-             * Checked one way on the way back in: a product whose counter is greater than the
-             * engine's is refused as too new, an older one is accepted, so 0 accepts nothing that
-             * carries a counter. Bump it when an extension is added; use the tag when one changes
-             * meaning.
-             *
-             * \param _ver Counter to stamp and to accept up to
-             */
-            virtual void set_vtype(uint_64 _ver) = 0;
-            /// The counter as stamped; 0 on an engine that never set one
-            virtual uint_64 vtype() const = 0;
-
             /// The engine's live configuration, valid for as long as the engine is
             virtual const engine_config& config() const = 0;
+            /// Compatibility tag stamped into every compiled product; a mismatch is refused at exec
+            virtual void set_etype(const std::string& _type) = 0;
+            /// Extension counter stamped into every compiled product; a higher one is refused at exec
+            virtual void set_vtype(uint_64 _ver) = 0;
             /// Frames allowed before StackError; 0 = unlimited
             virtual void set_max_stack(size_t _n) = 0;
             /// Syntax nesting one parse may reach; 0 = unlimited
@@ -624,14 +609,16 @@ namespace alx {
              */
             virtual void set_type_ex(type_ex _fn, void* _ud = nullptr) = 0;
 
-            /// True while an exec() is running; false everywhere else, call() included
+            /// True while a run (exec() or call()) is in progress; false everywhere else
             virtual bool running() const = 0;
             /**
-             * \brief Ask a running exec() to stop
+             * \brief Ask a running exec() or call() to stop
              *
              * Safe to call from any thread. The request is honoured at the next instruction
              * boundary and the run comes back as InterruptedError; a request made while nothing
-             * is running is discarded, because exec() clears the flag as it starts.
+             * is running is discarded, because an entry clears the flag as it starts. An
+             * interrupted run resets the engine — root variables and loaded modules are gone — as
+             * does any run that fails during execution.
              */
             virtual void set_interrupt() = 0;
 
@@ -673,8 +660,9 @@ namespace alx {
              * \brief Call a def left in the root scope
              *
              * The name is looked up in the root store alone, so the function has to come from an
-             * exec() that already ran. running() stays false while it runs, and an interrupt
-             * request only cuts the body short instead of being reported as InterruptedError.
+             * exec() that already ran. running() is true while it runs; it is interruptible like
+             * exec() — a mid-run request comes back as InterruptedError, an idle-period one is
+             * discarded at the entry.
              *
              * \param _name def name
              * \param _args Arguments, passed as values
@@ -687,13 +675,18 @@ namespace alx {
              * \brief Run source text, or a product of compile()
              *
              * A product is recognised by its container, so the one entry point runs either. Root
-             * variables and loaded modules are left behind for the next call. The script's own
-             * failures are reported rather than thrown: error carries the classification, value
-             * the message, and the message also goes to on_cerr with a traceback.
+             * variables and loaded modules are left behind for the next call — a run that fails
+             * during execution (an uncaught error or an interrupt) resets the engine instead. The
+             * script's own failures are reported rather than thrown: error carries the
+             * classification, value the message, and the message also goes to on_cerr with a
+             * traceback.
              *
              * \param _data Source text, or a compiled product
              * \param _home_dir Base relative imports resolve against, and the path the root module
              *                  is attributed to
+             * Only retainable data may leave: a result that holds an object handle (an anyptr, in a
+             * container too) is refused — error comes back as TypeError
+             * (`exec result: <type> cannot be returned`), the value released and the engine reset.
              * \return error ParseError when source does not parse (value stays empty), VersionError
              *         when a product fails the etype/vtype gate, ImportError when its payload is
              *         corrupt, InterruptedError when a hook or set_interrupt() stopped the run;

@@ -13,7 +13,7 @@
 
 #include "autility.h"
 #include <chrono>
-#include <sys/stat.h>
+#include <ctime>
 
 namespace alx {
     /**
@@ -25,7 +25,7 @@ namespace alx {
      * in the machine's local zone on each call (localtime_r / localtime_s), which is also what
      * makes the getters and to_string() safe to call from several threads.
      */
-    class ALXCORE_API datetime {
+    class ALXBASE_API datetime {
     private:
         using clock = std::chrono::system_clock;
         using time_point = std::chrono::time_point<clock>;

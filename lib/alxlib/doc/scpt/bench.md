@@ -34,22 +34,18 @@
 
 ## Maintenance rules (Claude executes these)
 
-1. **After every bench run**, transcribe the emitted CSV line into one row of the results table; the primary key is date + git commit (at the head of the CSV line, generated at run time)
+1. **After every bench run**, transcribe the emitted CSV line into one row of the results table; the primary key is date + version — the version the CSV line's commit carried, read from `CMakeLists.txt` at that commit
 2. CSV line format: `date,commit,GEOMEAN,<per-case S/N>` — the GEOMEAN (the combined ratio) comes right after the primary key; each cell holds the two raw `script/native` values (us), the ratio is not recorded
 3. An old row is **never deleted or modified** — history is history; new data is appended only
 4. The results table holds **results only**, one run per row; analysis and conclusions do not go into it
-5. A change to the bench code or the engine calls for a re-run and a new row; the commit must be the HEAD the bench ran at
-6. The environment has to meet the Test environment section's standard (g++ -O3 -march=native), otherwise the results are not comparable; note the difference next to the commit when transcribing
+5. A change to the bench code or the engine calls for a re-run and a new row; the version must be the one the measured HEAD carried
+6. The environment has to meet the Test environment section's standard (g++ -O3 -march=native), otherwise the results are not comparable; note the difference next to the version when transcribing
 
 ## Results table
 
 **Units**: each cell is `script/native` (us); the GEOMEAN is `full-workload weight/pure-script weight` (the a/b format, dimensionless).
 
-| Date | commit | GEOMEAN(a/b) | ex_call0 | ex_echo | func_call | int_loop | fib(28) | fib_tail | while_count | float_arith | vec_access | foreach | map_access | string_concat |
+**The table starts with the library-wide numbering** (2026-09-24): the earlier per-module numbering is retired, so its measurements are not carried over.
+
+| Date | version | GEOMEAN(a/b) | ex_call0 | ex_echo | func_call | int_loop | fib(28) | fib_tail | while_count | float_arith | vec_access | foreach | map_access | string_concat |
 |------|--------|--------------|----------|---------|-----------|----------|---------|----------|-------------|-------------|-----------|---------|------------|---------------|
-| 2026-09-10 | 4f13ead | 194/297 | 8891/91 | 16209/91 | 26375/92 | 13053/52 | 377107/848 | 33482/32 | 8981/13 | 12198/88 | 3299/4 | 2406/3 | 1979/67 | 827/10 |
-| 2026-09-10 | 4ab2d3c | 182/280 | 9115/91 | 16138/93 | 27102/96 | 13328/53 | 383446/847 | 33230/31 | 8815/13 | 12313/88 | 3291/4 | 2389/3 | 1773/109 | 826/10 |
-| 2026-09-10 | df2d777 | 185/275 | 9077/90 | 15929/91 | 24075/90 | 12208/51 | 270449/815 | 31746/31 | 8200/13 | 11385/85 | 3049/4 | 2267/2 | 1707/65 | 792/10 |
-| 2026-09-10 | edc9ef5 | 175/263 | 9081/92 | 14789/92 | 24553/94 | 12098/53 | 267407/826 | 30682/31 | 7325/13 | 10943/88 | 3132/4 | 2246/3 | 1621/68 | 794/10 |
-| 2026-09-17 | 80718e2 | 193/294 | 10085/90 | 16280/92 | 24771/93 | 13840/52 | 297991/822 | 34883/31 | 9095/12 | 12379/88 | 3517/4 | 2525/3 | 1753/65 | 856/10 |
-| 2026-09-17 | a47bde7 | 194/290 | 10234/90 | 16199/90 | 24836/94 | 13578/53 | 285001/838 | 33313/31 | 8434/13 | 12428/88 | 3548/4 | 2883/3 | 1826/68 | 838/10 |

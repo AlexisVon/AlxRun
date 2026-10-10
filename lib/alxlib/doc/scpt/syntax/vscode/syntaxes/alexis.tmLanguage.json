@@ -29,7 +29,7 @@
     },
 
     "char-literals": {
-      "name": "string.quoted.single.axc",
+      "name": "constant.character.axc",
       "begin": "'",
       "end": "'",
       "patterns": [

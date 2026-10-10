@@ -100,7 +100,7 @@ for key in calls:
 # count so that cannot happen quietly; bump it when rows are added on purpose. With the
 # overflow switch off the count is exact: a lowered floor there would hide rows that outlived
 # their switch, which is the one thing the two must never do.
-MIN_ASSERTIONS = 231 if OVERFLOW_ON else 229
+MIN_ASSERTIONS = 237 if OVERFLOW_ON else 235
 if checked < MIN_ASSERTIONS:
     fails.append(f"only {checked} assertions -- rows were lost (floor {MIN_ASSERTIONS})")
 if not OVERFLOW_ON and checked != MIN_ASSERTIONS:
@@ -254,12 +254,13 @@ with open(probe_mod, "w") as f:
 shutil.copy(probe_mod, os.path.join(env_dir, "evil.axc"))
 
 # `env` re-points the resolver but the gate sits *after* resolution, and `eval` inherits
-# the hook -- neither moves the door nor slips past it.
+# the hook -- neither moves the door nor slips past it. The eval sources use escaped double
+# quotes: `'...'` is a code-point literal since 1.2.0, so the old single-quoted form stopped parsing.
 for code, why in (('link "/usr/lib/libc.so.6" as c; return 1;', "link"),
                   (f'import "{probe_mod}" as m; return 1;', "import"),
                   (f'env(["{env_dir}"]); import "evil.axc" as m; return 1;', "env then import"),
-                  (f'eval(\'import "{probe_mod}" as m; return 1;\');', "eval then import"),
-                  ('eval(\'link "/usr/lib/libc.so.6" as c; return 1;\');', "eval then link")):
+                  (f'eval("import \\"{probe_mod}\\" as m; return 1;");', "eval then import"),
+                  ('eval("link \\"/usr/lib/libc.so.6\\" as c; return 1;");', "eval then link")):
     probes += 1
     rc, _, _, err = run_code(code)
     if rc != 1 or "not available here" not in err:
@@ -545,18 +546,18 @@ if not any('"id":81' in l and '"isError":false' in l for l in answered):
 if "80" in order and "81" in order and order.index("80") > order.index("81"):
     fails.append(f"cancel: the answer to the cancelled id must leave first (order {order})")
 
-# A value JSON cannot carry (a callable, a host handle) used to come back as a *silent* null --
-# indistinguishable from "the script returned nothing" (issue.md I-5). It is a named conversion
-# error now, and the detail names what could not cross, nested or not. The type is asserted as an
-# id: this refusal is the host's own, so its name never reaches stderr -- the exit code *is* the
-# machine channel for it (the engine's own errors carry "[Name]" in the text instead).
+# A value with no JSON face used to come back as a *silent* null -- indistinguishable from
+# "the script returned nothing" (issue.md I-5). The engine refuses it at the source now: a callable
+# cannot be read as a value at all, and a result holding a host handle is refused at the exec exit
+# (`exec result: <type> cannot be returned`, which the kernel lifts out of the value). Named either
+# way; the pinned id is the engine's own classification (10 = TypeError).
 probes += 1
 for code, nested in (('def f() { return 1; } return @("f");', False),
                      ('def f() { return 1; } return [1, @("f")];', True)):
     rc, _, ret, err = run_code(code)
-    if rc != 8 or "cannot be returned" not in err or ret is not None:  # 8 = ConvError (pinned)
+    if rc != 10 or "cannot be read as a value" not in err or ret is not None:
         fails.append(f"unserializable value{'(nested)' if nested else ''}: rc={rc} ret={ret!r} "
-                     f"err={err[:70]!r} -- want a ConvError naming it")
+                     f"err={err[:70]!r} -- want a named refusal")
 
 # $fs_read only takes regular files (issue.md I-3): a FIFO must be refused *before* any read --
 # opening one blocks until a writer appears, and a blocked syscall is a wall no budget can cut.
@@ -704,12 +705,13 @@ rc, out, err = in_wall('var a = $fs_istream("inside.txt"); var b = a; delete a;'
 if rc != 0 or "true" not in out:
     fails.append(f"handles: a copied handle: rc={rc} out={out[:60]!r} err={err[:80]!r} "
                  f"-- the copy must share the stream and outlive the original")
-# A handle has no JSON, so a run may not return one -- the kernel's own rule, checked here because
-# this is the first capability that can hand a host object out.
+# A handle has no JSON, so a run may not return one: the engine refuses it at the exec exit and the
+# kernel surfaces that text -- checked here because this is the first capability that can hand a
+# host object out.
 probes += 1
 rc, out, err = in_wall('return $fs_istream("inside.txt");')
 if rc == 0 or "cannot be returned" not in err:
-    fails.append(f"handles: returning a handle: rc={rc} err={err[:70]!r} -- want a named ConvError")
+    fails.append(f"handles: returning a handle: rc={rc} err={err[:70]!r} -- want a named refusal")
 for d in (wall_root, sib, outside):
     for root, dirs, files in os.walk(d, topdown=False):
         for name in files + [d for d in dirs]:
@@ -870,7 +872,8 @@ else:
         fails.append(f"resident: the run description is {len(resident)} chars -- over its 3072 budget")
     pins = ["string(int,n)=base", "$vec_sort: nested left alone", "$regex_match: the whole",
             "$json_str for containers", "inf/nan->null, int>2^53->float",
-            "byte-wise $str_*, [], regex", "in-place caps need a bare variable"]
+            "byte-wise $str_*, [], regex", "in-place caps need a bare variable",
+            "x[a,b]=v same kind"]
     if OVERFLOW_ON:
         pins.append("int overflow: throws")
     elif "int overflow" in resident:

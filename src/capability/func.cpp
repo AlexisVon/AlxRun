@@ -11,7 +11,9 @@ namespace capability {
     // the model does not reach for what it has not read (same as `lst`).
     const form s_func[] = {
         {"def f(a, b) {}", R"EX(def f(x) { return x+1; } return f(1); => 2)EX", nullptr, ""},
-        {"def f(a, b) {}", R"EX(def add(a,b){ return a+b; } def ap(f,a,b){ return f(a,b); } return ap(add,1,2); => 3)EX", nullptr, ""},
+        {"def f(a, b) {}", R"EX(def add(a,b){ return a+b; } return @("add")(1,2); => 3)EX", nullptr, ""},
+        {"def f(a, b) {}", R"EX(def add(a,b){ return a+b; } var tb=map{"add":"add"}; return @(tb["add"])(2,3); => 5)EX", nullptr, ""},
+        {"def f(a, b) {}", R"EX(def add(a,b){ return a+b; } def ap(f,a,b){ return f(a,b); } return ap(add,1,2); => ![TypeError] function cannot be read as a value)EX", nullptr, ""},
         {"def f(a, b) {}", R"EX(def f(a, b) { return a; } return f(); => ![ArgError] Missing argument)EX", nullptr, ""},
         {"def f(a, b) {}", R"EX(def f(a) { return a; } return f(1,2); => ![ArgError] Too many arguments)EX", nullptr, ""},
         {"def f(a, b) {}", R"EX(return f(1); def f(x) { return x; } => ![NameError] Undefined function)EX", nullptr, ""},

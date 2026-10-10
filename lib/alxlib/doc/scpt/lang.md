@@ -129,18 +129,19 @@ var off = false;
 
 > bool is a distinct type: it cannot be compared with int (`true == 1` → TypeError) and cannot take part in bitwise operations (`true & true` → TypeError). Emphatically "bool is not int".
 
-## 3.4 string
+## 3.4 string / char literal
 
 ```js
-var s = "hello";           // double quotes — " inside must be escaped as \"
-var t = 'world';           // single quotes — ' inside must be escaped as \', the complementary " needs fewer escapes
+var s = "hello";           // double quotes — a byte string; " inside must be escaped as \"
 var esc = "line1\nline2";  // escape sequences
+var c = 'A';               // single quotes — exactly one Unicode code point, evaluates to int (65)
+var nl = '\n';             // escapes decode to a code point (10)
 var raw = `raw \n "a" 'b'`;  // raw string — no escapes, may span lines
 ```
 
-The three quote kinds complement each other: `"..."` needs no escape for a `'` inside, `'...'` needs none for a `"` inside, and `` `...` `` escapes nothing at all.
+**string** (`"..."`): a byte string. Escape sequences: `\t` `\r` `\n` `\\` `\'` `\"` `\0` `\xNN`, where `\xNN` is the single byte 0xNN. A string containing a `'` needs no escape.
 
-**double/single** support escape sequences: `\t` `\r` `\n` `\\` `\'` `\"` `\0` `\xNN`
+**char literal** (`'...'`): exactly one Unicode code point, evaluating to its `int` value — `'A'` = 65, `'é'` = 233, `'你'` = 20320, `'𝄞'` = 119070. The code point may be written directly as a UTF-8 character (validated) or as an escape; in a char literal `\xNN` means code point U+00NN (`'\xE9'` = 233, unlike the byte 0xE9 in a string). Empty (`''`), more than one code point, and invalid UTF-8 are compile errors. An unknown escape drops the backslash and keeps the byte that follows, the same byte-wise rule as in `"..."` (`'\q'` = 113); a backslash before a multi-byte character is not an escape but two characters, and a char literal is exactly one, so it is rejected.
 
 **raw string** (`` `...` ``): characters inside the backticks are kept verbatim, no escape processing, may span multiple lines. Suited to regexes, embedded JSON, and text with many backslashes.
 
@@ -212,7 +213,8 @@ $print(b);                       // bytes(5)
 |------|------|
 | integer | `123` `0xFF` `0o77` `0b1010` |
 | float | `3.14` `1e5` `1.5e-3` |
-| string | `"hello"` `'world'` `"esc\n"` `` `raw str` `` |
+| string | `"hello"` `"esc\n"` `` `raw str` `` |
+| char literal | `'A'` `'\n'` `'你'` (evaluates to int) |
 | boolean | `true` `false` |
 | null value | `null` |
 | special float | `nan` `inf` |
@@ -351,13 +353,14 @@ type(lst[]);     // "lst"
 type(map{});     // "map"
 ```
 
-A value can also be an opaque **handle**, which only the engine and the host produce — a script holds one when it reads a module function (`import m; m.fn`), a namespace or area function (`b.mt.abs`), or an object a host extension handed over. `type()` names the engine's own handle kinds:
+A value can also be an opaque **handle**, which only the engine and the host produce — a script holds one when it reads an `import`/`link` alias (§11.3) or an object a host extension handed over; a function is not one of them (reading one is refused just below). `type()` names the engine's own handle kinds:
 
 | Value | `type()` |
 |-------|----------|
-| a callable handle (a module / link / area function) | `"func"` |
-| an import / link / area entity handle (a shielded namespace, §11.3) | `"import"` / `"link"` / `"area"` |
+| an import / link entity handle (a value like any other — §11.3) | `"import"` / `"link"` |
 | an empty handle (one that holds no object) | `"null"` |
+
+A callable is not a value — reading one is refused, `type()` included (`TypeError: function cannot be read as a value`) — so no call answers for one; reach it by calling (directly, through `@`, or by the name a table holds).
 
 Everything the script layer has no name of its own for — an object a host handed over, or a value of a variant type it does not model (only a host can pass one in: a 32-bit float, an unsigned integer, a `std::vector<T>`) — asks the host's type-naming callback (`engine::set_type_ex`) first; an empty answer, or no callback installed, gives `"unknown"`. A `null` value and an empty handle both answer `"null"`, so **empty reads as null, not as "unknown"**; `type()` never answers a null value itself.
 
@@ -462,43 +465,46 @@ v1 += v2;    // v1 = v1 + v2  (vec/lst concat)
 m1 += m2;    // m1 = m1 + m2  (map merge, right overwrites)
 ```
 
-**Assignment target**: must be a variable, a member access, an index expression or an `@()` dynamic path (the same rule as the `delete` target); any other shape (a literal, an arbitrary expression, a host constant folded out of `$name`) is a compile error. Slice targets are the exception — the grammar lets them through and the run time reports `TypeError` (see §6.4); whether an `@()` path is writable is likewise decided at **run time**, and an illegal one reports `TypeError`.
+**Assignment target**: must be a variable, a member access, an index expression or an `@()` dynamic path. The shape check is a **run-time** one (the lvalue check in the resolver, shared by `=` and the compound assignments): a literal, an arbitrary expression or a host constant folded out of `$name` reports `TypeError` at run time (see §6.4) — a slice is an ordinary target for `=` and only the compound forms refuse it; a name that is missing reports `NameError` (`Undefined: <name>`; on the `@()` path the same). A function binding is not assignable (`g = 5` reports `NameError: Cannot assign to function`; the compound form dies later, as `TypeError`, through the operand's own type check). An `import`/`link` alias is an ordinary value: assigning over it discards the instance and the value takes its place.
 
 **Compound assignment semantics:**
 
-- `x += f()` ≡ `x = x + f()`: the read of `x` happens **before** the call to `f()` (read first, then call; any modification `f()` makes to `x` is overwritten by the write-back).
-- **Purification optimisation**: `a += b` / `a = a + b` (target a simple variable or a pure member chain, rhs a pure read expression) compiles to a single `O_ASS_*` opcode — the target is resolved once. Shapes with side effects (function calls and the like) stay expanded as `a = a op b`: the LHS index expression is evaluated twice, so in `v[expr()] += 1` the call `expr()` happens twice.
-- **Compound assignment on `[null]` (the append index) is a compile error**: both reading and writing the append index carries a push side effect. Write it explicitly: `v[null] = 0; v[-1] += x;`.
+- **The RHS evaluates first, then the target is resolved once**: in `x += f()` the call to `f()` runs before `x` is read, so whatever `f()` does to `x` is what the read sees (`x = 1`; `f()` sets it to 100 and returns 5 → `x` becomes 105). This is the C++17 order for `E1 op= E2` (P0145R3: the right operand is sequenced before the left), the same order `=` uses.
+- **The target is resolved exactly once**: `a[f()] += v` calls `f()` once (the explicit `a[f()] = a[f()] + v` calls it twice) and writes back the slot it read.
+- **Compound assignment (and `++`/`--`) on `[null]` (the append index) is a run-time `TypeError`**: its read is the size and its write is a push — not the same place, so it cannot be read-modified-written. Write it explicitly: `v[null] = 0; v[-1] += x;`.
+- **A byte element and a slice take `=` only**: `s[0] += 1`, `++s[0]`, `v[1, 3] += [1, 2]` are run-time `TypeError`s — the byte is not a variant slot and the slice is not a single place. Write the explicit read-then-write: `s[0] = s[0] + 1; v[1, 3] = v[1, 3];`.
 
 ## 6.3 [] indexing
 
 | Index | Semantics | Applicable types |
 |------|------|---------|
-| `0` | front element, read+write | vec / lst / string |
-| `-1` | back element, read+write | read: vec / lst / string; write: vec / lst |
-| `null` | read→`size()` / write→push_back | read: vec / lst / string / map; write: vec / lst |
+| `0` | front element, read+write | vec / lst / string / bytes |
+| `-1` | back element, read+write | vec / lst / string / bytes |
+| `null` | read→`size()` / write→push_back (one byte on string/bytes) | read: vec / lst / string / bytes / map; write: vec / lst / string / bytes |
 | `"key"` | dictionary key, read+write | map |
 
 **Read / write / compound-assignment behaviour:**
 
 | Type | Operation | `0` | `-1` | `null` | Any `[i]` |
 |------|------|-----|------|--------|-----------|
-| vec | read | ✅ | ✅ | ✅ size | ✅ |
-| vec | write | ✅ | ✅ | ✅ push | ✅ |
-| vec | compound assignment | ✅ | ✅ | ❌ compile error | ✅ |
-| lst | read | ✅ front | ✅ back | ✅ size | ✅ O(n) |
-| lst | write | ✅ overwrite front | ✅ overwrite back | ✅ push | ✅ O(n) |
-| lst | compound assignment | ✅ | ✅ | ❌ compile error | ✅ O(n) |
-| string | read | ✅ | ✅ back | ✅ size (byte count) | ✅ |
+| vec | read / write | ✅ | ✅ | read size / write push | ✅ |
+| vec | compound assignment | ✅ | ✅ | ❌ run-time TypeError | ✅ |
+| lst | read / write | ✅ front | ✅ back | read size / write push | ✅ O(n) |
+| lst | compound assignment | ✅ | ✅ | ❌ run-time TypeError | ✅ O(n) |
+| string / bytes | read | ✅ byte value | ✅ last byte | ✅ size (byte count) | ✅ |
+| string / bytes | write | ✅ byte value | ✅ last byte | ✅ append one byte | ✅ |
+| string / bytes | compound assignment | ❌ run-time TypeError | ❌ | ❌ | ❌ |
 | map | read | — | — | ✅ size (key count) | ✅ string key only |
+| map | write | — | — | ❌ run-time TypeError | ✅ string key only |
 
-> **The `[null]` rule**: size semantics only at **the terminal of a chain + in a read position**, uniformly across the four containers; a scalar parent value (`n[null]`, n being int/bytes etc.) → `TypeError`. In a write position only vec/lst append, everything else is `TypeError` without exception. A non-terminal `a[null].b` → `IndexError`; `delete a[null]` → `ConvError`.
+> **The `[null]` rule**: size semantics only at **the terminal of a chain + in a read position**, uniformly across vec/lst/string/bytes/map; a scalar parent value (`n[null]`, n being an int etc.) → `TypeError`. In a write position vec/lst/string/bytes append (one byte on a byte container), a map → `TypeError` without exception. A non-terminal `a[null].b` → `IndexError`; `delete a[null]` → `ConvError`.
 >
-> string does not support indexed writes (any index → `TypeError`). A map key must be a string; a non-string (including `null` and numbers) → `TypeError` — it is not silently turned into `""`.
+> **A string / bytes element is its byte value (int 0-255), read and write alike**: the read gives the int, the write takes one. The value goes through the ordinary integer conversion, then the 0-255 write-back policy — wrap (`& 0xFF`) by default, an `OverflowError` under `overflow_check`. **The position is checked before the value**: `s[5] = 300` reports the `IndexError` under `overflow_check` (a `[null]` append has no position, so its value converts first). `+=` / `++` on a byte element is a run-time `TypeError` (a byte is not a variant slot): write the explicit `s[0] = s[0] + 1`. `delete` refuses a byte element too.
+> A map key must be a string; a non-string (including `null` and numbers) → `TypeError` — it is not silently turned into `""`.
 
 ## 6.4 Slicing `[from, to]` / `[from, to, step]`
 
-A comma-separated index is a slice operation, `[from, to)` half-open, returning a new container of the same type (read-only).
+A comma-separated index is a slice operation, `[from, to)` half-open, returning a new container of the same type. A slice is also an assignment target — see **Slice assignment** below.
 
 ```js
 var v = [0, 1, 2, 3, 4, 5];
@@ -515,7 +521,9 @@ l[1, 3];         // [20, 30]      — an lst slice returns an lst
 "hello world"[0, 5];  // "hello"   — string slice
 "hello"[3, 0, -1];    // "lle"     — string reversed
 
-v[1, 3] = 99;    // ❌ TypeError: slice is read-only
+var o = map{"v": [1, 2, 3, 4]};
+o.v[1, 3];       // [2, 3]        — a slice through a dot chain, `o["v"][1, 3]` alike
+o.v[1, 3] = [9:2];  // the chain becomes the slice's base; a fill is constructed
 ```
 
 | Semantics | Description |
@@ -524,7 +532,7 @@ v[1, 3] = 99;    // ❌ TypeError: slice is read-only
 | `step` | defaults to 1, a negative step traverses in reverse |
 | out of bounds | IndexError (no clamp) |
 | step=0 | ArgError |
-| return type | a new container of the same type (vec/lst/string), an rvalue |
+| return type | a new container of the same type (vec/lst/string/bytes), an rvalue |
 
 ```js
 var a = [10, 20, 30];
@@ -535,20 +543,40 @@ $print(a[null]);    // 3 — size
 a[null] = 99;      // push_back → [10, 20, 30, 99]
 
 "hello"[null];     // 5 — string length (byte count)
-"hello"[0];        // "h"
-"hello"[-1];       // "o" — last character; [-2] is out of bounds (only -1 is back)
+"hello"[0];        // 104 — the byte value; a string element is an int 0-255
+"hello"[-1];       // 111 — last byte; [-2] is out of bounds (only -1 is back)
 map{"k": 1}[null]; // 1 — map key count
 var o = map{"arr": [1, 2], "s": "hi"};
 o.arr[null];       // 2 — holds on a dot chain too
 o.s[null];         // 2
-o.s[-1];           // "i"
+o.s[-1];           // 105 — the byte `i`
 ```
 
-> `[]` inside a dot chain accepts **literal** indices only (integer/string/null), so `o.s[0]` / `o.s[-1]` work while `o.s[i]` is illegal.
+**Slice assignment**
 
-> **Rule**: `null` has size semantics only at **the terminal + in a read position** (uniform across vec/lst/string/map). `a[null].b` (non-terminal) → `IndexError`. In a write position only vec/lst append, everything else → `TypeError`. `delete a[null]` → `ConvError` (a null index may not be deleted), use `delete a[-1]` to drop the last element.
+```js
+var v = [0, 1, 2, 3, 4, 5];
+v[1, 4] = [10, 20, 30];   // positions 1,2,3 become 10,20,30
+v[0, 6, 2] = [9:3];       // a fill — a constructed operand, positions 0,2,4 become 9
+v[5, 1, -2] = [50, 30];   // a reverse step gathers and scatters in the read's own order
+
+var s = "hello";
+s[1, 3] = "EL";           // same type, byte-count matched → "hELlo"
+```
+
+| Rule | Description |
+|------|------|
+| target | a linear container that already exists (vec/lst/string/bytes); an rvalue base → TypeError |
+| operand | the **same container type**, scattered in the position order the read would produce (a negative step included); its element count must equal the position count. Anything else — a scalar included — is a TypeError, so a fill is written out: `v[1, 3] = [9:2]`, `l[1, 3] = lst([9:2])` |
+| count | equal exactly, else ArgError (`[v: N]` with a matching N, or `[]` for an empty slice) |
+| length | never changes: a slice write overwrites positions in place |
+| operators | `=` only: `v[1, 3] += [1, 2]` and `delete v[1, 3]` are run-time TypeErrors |
+
+> `[]` inside a dot chain accepts **literal** indices only (integer/string/null), so `o.s[0]` / `o.s[-1]` work while `o.s[i]` is illegal. The **comma form is the exception**: `o.v[1, 3]` is a slice whose base is the chain, and its bounds are full expressions.
+
+> **Rule**: the `[null]` read/write split is stated once in §6.3 — a null is the size at the terminal of a read, and an append position (one byte on a byte container) only where the container supports it. `a[null].b` (non-terminal) → `IndexError`. `delete a[null]` → `ConvError` (a null index may not be deleted), use `delete a[-1]` to drop the last element.
 > 
-> `[]` inside a dot chain accepts literals only (integer/string/null). A variable index `a[i]` is illegal in a dot chain — when the index must be computed at run time, build the path string first and access it through `@(path)` reflection. A standalone index `a[i]` (not in a dot chain) is not subject to this restriction.
+> `[]` inside a dot chain accepts literals only (integer/string/null). A variable index `a[i]` is illegal in a dot chain — when the index must be computed at run time, build the path string first and access it through `@(path)` reflection. A standalone index `a[i]` (not in a dot chain) is not subject to this restriction, and a comma form (`o.v[1, 3]`) is a slice, not an index — its bounds may be any expression.
 
 
 
@@ -712,7 +740,7 @@ for (var j = 0; j < 5; ++j) {  // var in init — j scoped to loop
 for (;;) { break; }    // infinite loop (empty condition = true)
 ```
 
-The loop body pushes a frame implicitly; a `var` declared inside the loop does not leak to the enclosing scope. After each iteration the body's temporary variables are cleared by a checkpoint reset.
+The loop pushes a frame implicitly; a `var` declared inside the loop does not leak to the enclosing scope. After each iteration the body's temporary variables are cleared by the iteration cleanup.
 
 ## 8.3 for-each
 
@@ -837,7 +865,7 @@ Rules:
 The host may pre-register version constants, which a script can read directly:
 
 ```js
-$vtype;   // extension support set (same as engine::vtype())
+$vtype;   // extension support set (same as engine::config().vtype)
 $etype;   // engine version string
 ```
 
@@ -899,10 +927,12 @@ def outer() {
 ```
 
 - a parameter with no default that is not supplied → `ArgError`
-- **Argument evaluation semantics (values taken at the end, uniformly)**: the argument expressions are evaluated left to right (so the side-effect order is determined); the value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
+- **Argument evaluation semantics (the call order)**: the argument expressions are evaluated left to right (so the side-effect order is determined), the callee's path expressions run after them, and the callee's address is taken last — nothing runs script code between that and the invoke, so an argument that discards the callee's owner (`m.f(delete m)`) fails cleanly while the callee path resolves. The value of a variable argument is read **once every argument expression has been evaluated** — an assignment/rewrite of an earlier variable argument by a later argument expression is visible to the callee. In `f(x, x = 5)` the `x` is passed as `5`; in `f(count, next_count())` the `count` is passed as its post-call value. Script functions and link native functions behave identically
+- **a callable is not a value**: any copy of one is refused by the type itself (`TypeError: function cannot be read as a value`) — a binding, a container, an expression handed to a call, a script def's parameter, and `type()`'s argument alike; call it instead (directly, through `@`, or by the name it is held under). The one channel open is **by reference, not by copy**: a `$`/link native receives a bare-name argument as a slot pointer and takes a callable that way
+- a call target that evaluates to something that is not a callable → `NameError: not a function: <type>` (`type()` spells the type)
 - tail call optimisation (TCO): when `return f(args)` has `f` as the current function's name, the current frame is reused automatically — no new frame, no depth limit (does not apply when the name is locally shadowed, see §9.2.1)
 - indirect calls use the `@` prefix syntax, see §10
-- `delete funcName` removes a function definition (within the current module)
+- `delete funcName` removes a function definition (the current module, top layer only — from a frame it returns `false`)
 
 ### 9.2.1 Tail recursion
 
@@ -1009,14 +1039,14 @@ trap(cond_expr, args_expr);  // two arguments: a falsy cond_expr skips it (args_
 
 ## 10. Reflection
 
-Indirect operations on variables/functions that **already exist**: read, write, delete, call. In `@name` / `@(expr)` the result of evaluating `name`/`expr` must be a `string`, used to determine the target name at run time.
+Indirect operations on variables/functions that **already exist**: read, write, delete, call. `@` is the language's **pointer substitute**: the string is parsed into an object — an *object alias*, a reference to an existing object. In `@name` / `@(expr)` the result of evaluating `name`/`expr` must be a `string`, used to determine the target at run time.
 
 In a declaration position (`var`/`def`/`import as`/`link as`) `@` is **forbidden**; the name must be fixed at compile time.
 
 - **`@var`**: `var` must be an already defined variable whose value is a `string`. Its value is then used as the target name.
 - **`@(expr)`**: the result of evaluating `expr` must be a `string`. Any run-time expression is accepted.
-- The string must be a **legal identifier** (simple name) or a **path string** (containing `.` / `[N]`, such as `"a.b[0]"`).
-- non-string → `TypeError`, target does not exist → `NameError`, reading/writing a namespace by mistake → `TypeError`.
+- The string must be a **legal identifier** (simple name) or a **path string** (containing `.` / `[N]`, such as `"a.b[0]"`) — the string is an **object alias**: it denotes an existing object for read / write / delete / call. Anything that is not a name or chain — an expression, a call, a slice — denotes no object and is refused (`NameError`, `reflection is not a legal name or chain: <string>`); evaluating a source string is `eval`'s job, not `@`'s.
+- non-string → `TypeError` (`Indirect load: variable did not evaluate to a string` on read / write, `delete @: expression did not evaluate to a string` on delete), while the **call port reports `NameError`**: `Indirect call: expected function name string, got <type>` — an empty string included (`got string`; at the other three ports it goes through and fails later, at the path parse: `RuntimeError: Cannot parse path`); target does not exist → `NameError` (a non-name/chain string is refused by the same layer: `NameError: reflection is not a legal name or chain: <string>`; the call position words it `Indirect call: invalid path '<string>'`).
 
 ### 10.1 Value reflection `@`
 
@@ -1072,7 +1102,7 @@ The constraints match those of extension functions: callable but not readable (a
 
 - a bare dot chain after `@` is not read as a name: `@a.b` evaluates the chain and uses its **value** as the target name, exactly like `@(a.b)`. Calling through a literal dot chain is the compile error (`@a.b(...)` → "@ requires a simple variable name, not a dot chain"); use a variable or `@(expr)`
 - an indirect call does not trigger TCO (self-recursion cannot be determined at compile time)
-- a link module reads and writes script variables through `nload` (see §12.4, the fwrap interface)
+- a link module reads and writes script variables through `iload` (see §12.4, the fwrap interface)
 - `for-each`, `catch` and function parameters do not take `@` (they are fixed syntaxes that introduce new names)
 - **avoid modifying the target name string through `@` inside a loop**: if the loop body changes the variable a `@i` depends on, the loop-variable binding becomes uncontrollable, much like a `goto` (the grammar does not forbid it, but it is strongly discouraged).
 
@@ -1139,7 +1169,7 @@ import "math.axp" as math;    // compiled product
 - importing the same module several times in one module (under different aliases) is legal: the defs are shared, the data is isolated
 - the body runs on the first execution; later ones skip execution and copy the initial state directly
 - an optional compile-time embed (`compile(..., _embed=true)`): imports are resolved and inlined recursively at parse time (absolute paths looked up directly / the `"."` rule = the module's own directory), key = `"@"+sha256(absolute path+content)[0:16]`; in embed mode link/env() are compile errors, an import that cannot be resolved is a compile error, a circular import is a compile error, and an imported .axp must have an empty unresolved-dependency list. The product is self-contained
-- `delete aliasName` removes an import namespace; it may be imported again afterwards
+- `delete aliasName` removes an import namespace (module top layer; from a frame a module-level alias returns `false` — an alias the frame declared itself, an `eval` body included, is the frame's own variable and deletes normally); it may be imported again afterwards
 - across modules a variable may only be read and written, not created or deleted
 - **multiple engines in parallel**: several engines in one process (in parallel across threads) may import the same module at once — parsing is shared, instances are isolated; once every module instance has been released, importing again re-parses (hot reload, so new content on disk takes effect)
 
@@ -1169,6 +1199,14 @@ $print(p1.len());       // 25
 $print(p2.len());       // 61 — the data is isolated
 ```
 
+**Instances can live in containers**: a container holds copied instances the same way a binding does — every handoff copies (a call argument, a return, a container literal or element, `@("alias")`) — so a container of copies is an **array of objects**. Read an element out into a binding to use it (a container element does not carry a dot chain in place):
+
+```js
+var ps = [p1, p2];     // two independent instances
+var q = ps[0];         // read one out — q is a full object: members and methods
+q.init(1, 1);          // methods run against the copy's own store
+```
+
 ## 11.2 Namespace access
 
 ```js
@@ -1182,8 +1220,8 @@ b.ex.slice(v, 0, 2);
 
 - **Variable lookup**: the current frame's var_map → parent frames of the same module → the entity's persistent m_map. At a module boundary (the frame's ent changes) the frame search stops and only the current entity's m_map is used as a fallback
 - **Module isolation**: different import/link aliases create independent modules whose variables do not connect
-- **Namespace shielding**: an import/link `as` alias is an opaque namespace, reachable only through `.` for its members (`alias.func()`, `alias.x`); it cannot be read or copied as a value (`var x = alias` → `TypeError`). link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`)
-- **Frames**: only block / function call / for / while / for-each push a new frame implicitly, and popping them rolls back (scope_frame RAII). A module's top level has no frame — `var` writes straight into the entity's persistent m_map
+- **Alias values**: an import/link `as` alias is an ordinary value — a bare read (`var x = alias`) copies the instance, an assignment over it (`alias = v`) discards the instance and the value takes its place, and every hand-off — a call argument, a return, a container literal or element, `@("alias")` — copies the same way. The copy belongs to wherever it lands: bound to a variable or a parameter, `..` from the copy resolves in the module that holds that binding; a copy that never lands (a temporary) has no parent. The copy is independent of the original — its own store and sub-module instances — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`) — a write that lands on a nested alias slot discards that handle and puts the value in its place
+- **Frames**: only block / function call / eval / try / for / while / for-each push a new frame implicitly, and popping them rolls back (scope_frame RAII). A module's top level has no frame — `var` writes straight into the entity's persistent m_map
 - **dot chains across modules**: a positional dot (`::` / `..`) consults the target entity only and cannot penetrate function frames (module value-semantics isolation)
 
 ## 11.4 env
@@ -1230,7 +1268,7 @@ link "mylib" as mylib;     // dlopen → dlsym("alexis_script_load"), the engine
 
 - `as NAME` is mandatory, top level only
 - alias conflict (a var/def/link/import of the same name already in this module) → `NameError`
-- `delete aliasName` removes the link instance (refcount-- → dlclose at zero); it may be linked again afterwards
+- `delete aliasName` removes the link instance (refcount-- → dlclose at zero; module top layer — from a frame a module-level alias returns `false`, while an alias the frame declared itself deletes as its own variable); it may be linked again afterwards
 - **multiple engines in parallel**: several engines (in parallel across threads) may link the same library at once — the dlopen handle is shared, the template/instance is per-engine and independent; once every instance has been released, linking again re-dlopens (hot reload)
 - the four link ABI functions (all `void (*)(fwrap&)`, all optional):
   - `alexis_script_load` — whole-link initialisation (once after dlopen, builds the template)
@@ -1238,6 +1276,7 @@ link "mylib" as mylib;     // dlopen → dlsym("alexis_script_load"), the engine
   - `alexis_script_release` — instance destruction (releases the instance's resources)
   - `alexis_script_unload` — whole-link destruction (before dlclose)
   - the lifecycle is a determined sequence: `load → create×N → release×N → unload`
+- **objects and instances**: the template's wrapped objects reach each instance by copy — a copyable `make()` type deep-copies, a non-copyable one arrives empty (a null handle, no crash). Build per-instance objects in `alexis_script_create`, or share with `make_ref()` (single-threaded, so sharing is safe; its copies point at the same object). A script-level copy of an instance (`var b2 = b`) clones the instance's store and runs `create` over it again, so `create` must accept an already-populated store and its data must be copyable (or ref-held)
 - inside a callback, register functions by calling `args.bind("name", callback)`
 - linking the same library several times (under different aliases) gives independent instances that share the module, with a refcount managing the lifetime
 - **link has its own data block**: C++ bind functions can operate on it through `args.load/store/remove`
@@ -1296,14 +1335,15 @@ b.y.name();
 - re-init: call `args.remove(name)` before `wrap` to clear the old object, otherwise a repeated area name throws
 - teardown: the `anyptr` destructor deletes the C++ object automatically, so no `alexis_script_release` is needed
 - reflection `@` needs `@(string)` to call an area function indirectly
-- **Module namespace shielding**: an `import`/`link` `as` alias is an opaque namespace — a bare read (`var x = alias`) or a compound assignment (`alias += 1`) throws `TypeError`. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on import are allowed. A link's internal data is completely invisible to a script — unreadable, unwritable, undeletable. Native code can reach it through `nload`; the restriction applies to the script layer only
+- **Alias values**: an `import`/`link` `as` alias is an ordinary value — a bare read copies the instance and an assignment over it discards it (`alias += 1` reads the copy and dies in the operand's type check). link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on import are allowed. A link's internal data is completely invisible to a script — unreadable, unwritable, undeletable. Native code can reach it through `iload`; the restriction applies to the script layer only
 - `delete` rules:
   - `delete link.area_instance` → ✅ allowed (destroys the area instance, runs the anyptr destructor)
   - `delete link.area_namespace` → ✅ allowed (removes the whole area registration)
   - `delete link.func` → ❌ TypeError (a callable is not an object, deletion forbidden)
   - `delete link.area.func` → ❌ TypeError (a callable is not an object, deletion forbidden)
-  - `delete link.data_var` → ❌ TypeError (link data is shielded from scripts)
-  - reading `link.data_var` / writing `link.data_var = val` → ❌ TypeError (link data is shielded from scripts)
+  - `delete link.data_var` → ❌ TypeError (link data is shielded from scripts — any depth, same as reading / writing)
+  - reading `link.data_var` / writing `link.data_var = val` → ❌ TypeError (link data is shielded from scripts, elements and nested keys at any depth alike: `link.data[0]`, `link.data.k`, direct / `@()` / nav forms)
+  - writing an existing area native, `link.area.func = val` → ❌ NameError (`Cannot assign to function: <name>`) — the native table holds the registration, not a writable slot; a missing key still says `Undefined`
 - `@` reflection behaves exactly like the direct syntax: `delete @("b.x")` ≡ `delete b.x`
 
 ## 12.3 Writing a new link library
@@ -1342,18 +1382,20 @@ str.upper("hi");  // "HI"
 | `args.load("x")` | read a link private variable → `variant*` (simple name) |
 | `args.store("y", val)` | write a link private variable (`const&` copies; `&&` moves — a non-copyable object is moved to keep it alive) |
 | `args.remove("z")` | delete a link private variable |
-| `args.nload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a miss returns `nullptr`) |
-| `args.call(func, args_vec)` | call: `string` → nload resolution → call_able → execute; `anyptr<call_able>` → execute directly |
+| `args.iload("key")` | unified dot-chain access → `variant*` (copy-free, readable and writable; a bare-name miss returns `nullptr` — the promise covers the resolved outcome, so a `.` path whose intermediate step does not resolve still reports that step's error) |
+| `args.call(func, args_vec)` | call: `string` → iload resolution → call_able → execute; `anyptr<call_able>` → execute directly |
 | `args.bind("name", func)` | register a native function (optional third argument `_area`) |
 | `args.bind("name", func, "area")` | register into a sub-scope |
 | `args.raise(val[, type])` | throw a script exception |
-| `args.object()` | the `anyptr*` stored for the current area |
-| `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object |
+| `args.object()` | the `anyptr*` stored for the current area — area natives only |
+| `args.unwrap<T>()` | `anyptr_ex<T>::as(*object())` — type-safe access to the C++ object (area natives only, like `object()`) |
 | `args.wrap<T>(ptr, "area", {{"m1", fn1}, ...})` | store the obj + register methods into the area |
 
-> **The `nload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
+> **Pointer validity (one contract)**: everything this interface hands back — the `args[i]` view, an `iload`/`load` slot, the `m_area` behind `object()`/`unwrap<T>()` — dies the moment script code runs again: a `fw.call()` back into the script (the script may `delete` the area, the instance or the module) or a failed run's reset invalidates them all, after which they must not be touched. `object()`/`unwrap<T>()` are for area natives only — outside an area dispatch (an extend handler, a load/unload callback, a `bind` with no `_area`) no area is set, and calling them there is outside the contract — nothing is set to hand back.
 
-> **What extend and link can use**: fwrap is designed for link modules as a whole (`bind`/`area`/`object`/`wrap`/`load`/`store` are all link concepts). An extension function handler borrows the same interface but has **no private domain** — its `m_store` points at the current module's root store. Inside an extend the data plane must **use `nload` only** (reflection semantics, with the full scope/frame machinery, and there is always an active walker during a call); `load`/`store`/`remove` consult the root store directly and bypass scope and `var` declaration checks — they cannot see frame variables, and a write goes straight into the module's root table, so this is misuse and is forbidden. A link's load/unload callbacks (no active walker, `nload` unusable) are the legitimate setting for `load`/`store`.
+> **The `iload` path**: a simple name → data_store (`O_ILOAD` → `resolve_dot`).
+
+> **What extend and link can use**: fwrap is designed for link modules as a whole (`bind`/`area`/`object`/`wrap`/`load`/`store` are all link concepts). An extension function handler borrows the same interface but has **no private domain** — its `m_store` points at the current module's root store. Inside an extend the data plane must **use `iload` only** (reflection semantics, with the full scope/frame machinery, and there is always an active walker during a call); `load`/`store`/`remove` consult the root store directly and bypass scope and `var` declaration checks — they cannot see frame variables, and a write goes straight into the module's root table, so this is misuse and is forbidden. A link's load/unload callbacks (no active walker, `iload` unusable) are the legitimate setting for `load`/`store`.
 
 ## 12.5 The C++ object wrapping pattern
 
@@ -1461,7 +1503,7 @@ Each **module** (the entity an import creates) owns an independent scope (variab
 
 1. **Variable**: search up the scope chain, stopping at the current module's root frame
 2. **Sub-module**: a direct `import` / `link` child of the current module
-3. **link namespace**: cannot be read as a variable → `TypeError`
+3. **through a link**: its sub-data cannot be read — `TypeError` (a link alias itself is an ordinary value; see §11.3)
 
 ### Data access
 
@@ -1571,31 +1613,33 @@ A positional dot only walks the entity tree. The nav segment stops once it lands
 - `::` may not appear mid-chain
 - `..` may be repeated (`....` = two levels up)
 - a positional dot **does not enter container values automatically** — `[]` indexing is allowed only inside a `.(...)` bridge
-- **`[]` inside a dot chain accepts literals only** (integer, string, null, including `-N` constant folding). A variable index such as `a[i]` is not allowed — when the index must be computed at run time, build the path by string concatenation first and access it through `@(path)` reflection
+- **`[]` inside a dot chain accepts literals only** (integer, string, null, including `-N` constant folding). A variable index such as `a[i]` is not allowed — when the index must be computed at run time, build the path by string concatenation first and access it through `@(path)` reflection. The **comma form is the exception**: `o.v[1, 3]` builds a slice whose base is the chain, and its bounds may be any expression
 - across modules, a **variable**: an existing variable may be read and written, not created or deleted (the import module rule)
 - across modules, a **container value**: after a bridge the container's keys are reachable
 - `..` beyond the tree depth → `NavError`
-- **Module namespace shielding**: an import/link `as` alias is an opaque namespace — a bare read or a compound assignment throws `TypeError`. link additionally shields dot writes. See §11.3 namespace shielding and §13.4 for the link delete rules
+- **Alias values**: an import/link `as` alias is an ordinary value — a bare read copies the instance and an assignment over it discards it. link additionally shields dot writes, and a link's sub-data stays opaque at any depth. See §11.3 and §13.4 for the link delete rules
 
 > `@` is only effective at the chain's head (see §10). For cross-module reflection use the combination: `var fn = ..cb; @(".." + fn)(args);`.
 
 ## 13.4 delete
 
 `delete` is a right-associative prefix expression at the same level as `@` — both are consumed by the same suffix-parsing layer, so it binds **tighter** than `!` / `~` / `+` / `-` (`delete -x` is a syntax error). It returns `bool`. Its operand is a suffix expression, so `delete a[0]` is `delete (a[0])`.
-It can be used in an expression context: `var r = delete x; r;` — `r` is `true` (the deletion happened) or `false` (a silent no-op).
+It can be used in an expression context: `var r = delete x; r;` — `r` is `true` (the deletion happened) or `false` (a silent no-op). The operand must be a variable, a member access, an index expression or an `@()` dynamic path; any other shape — a literal, a call result, a slice — reports `TypeError` at run time.
 
 ### Variable / function / module deletion
 
 ```js
-delete x;             // delete a variable (the current entity or scope frame)
-delete func_name;     // delete a function definition (the current module)
-delete alias;         // delete an import / link alias
+delete x;             // delete a variable of the current layer
+delete func_name;     // delete a function definition (module top layer)
+delete alias;         // delete an import / link alias (module top layer)
 ```
 
-- **is_root()**: a module-level delete goes to the entity's `m_store`; a non-root one goes to the current scope frame
-- silent failure: a name that does not exist → returns `false`, no exception
+- **execution layer**: only the module top layer — no frame pushed, i.e. the root script's top level and an imported module's top level — deletes from the entity's `m_store`; any frame (function / TCO / block / loop / eval / try) deletes its own variables only and returns `false` for anything outside it
+- **loop head**: the for-init declarations and the foreach iteration variable cannot be deleted from the body (`delete i` → `false`, the loop goes on); a body variable is deletable as usual
+- silent failure: a name that does not exist → returns `false`, no exception; the `@()` name expression itself must evaluate (a missing `x` in `delete @x` is a `NameError`)
 - after a deletion the name can be declared again — once it is out of every namespace, `var`/`def`/`link` all create it normally
 - **cross-module delete**: another module's variable cannot be deleted → throws `NameError`
+- **resource deletion is exempt from the frame and cross-module slot rules**: deleting a link's area instance or namespace destroys a host object rather than removing a slot, so it is allowed wherever the path reaches it from (a frame, another module) — the barriers above are about variables
 - defensive use: `delete .init;` is safe before a declaration
 
 ### Container deletion
@@ -1616,7 +1660,7 @@ delete alias;         // delete an import / link alias
 
 ### link/area delete rules
 
-An import/link `as` alias is an **opaque namespace** — its members are reachable only through `.`, and it cannot be read or copied as a value (`var x = alias` → `TypeError`). link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`).
+An import/link `as` alias is an **ordinary value** — a bare read (`var x = alias`) copies the instance, an assignment over it discards it, and every hand-off — a call argument, a return, a container literal or element, `@("alias")` — copies the same way. The copy belongs to wherever it lands: bound to a variable or a parameter, `..` from the copy resolves in the module that holds that binding; a copy that never lands (a temporary) has no parent. The copy is independent of the original — its own store and sub-module instances — so a later `delete` of the original does not touch it. link additionally shields dot writes (`alias.x = v` → `TypeError`); dot writes on an import are allowed (they go into the import entity's `m_store`) — a write that lands on a nested alias slot discards that handle and puts the value in its place.
 
 A link module's internal data is **completely shielded** from a script. An area instance/namespace (mounted under a link, holding the host object's anyptr) **may be deleted** — deleting it destroys the host object (anyptr destructor → the host object is deleted); **functions (callables) and data variables may not be deleted**. Once an instance/namespace has been deleted, a script touching that path again throws.
 
@@ -1625,14 +1669,13 @@ A link module's internal data is **completely shielded** from a script. An area 
 | area instance | `delete b.inst` / `delete @("b.inst")` | ✅ deletion allowed (anyptr destructor → host object destroyed) |
 | area namespace | `delete b.fs` | ✅ deletion allowed (same as an instance) |
 | link/area function | `delete ts.set` / `delete b.fs.open` | ❌ TypeError (a callable is not an object, deletion forbidden) |
-| link data variable | `delete ts.data_x` | ❌ TypeError (link data is shielded) |
-| area data variable | `delete b.at_f` | ❌ TypeError (not an object, not a callable) |
+| link data variable | `delete ts.data_x` | ❌ TypeError (link data is shielded, at any depth) |
 | positional dot | `delete .ts.data_x` | ❌ TypeError (same as an ordinary dot) |
 | @ reflection | `delete @("ts.data_x")` | ❌ TypeError (@ matches the direct syntax) |
 
 > **`@` and the direct syntax have exactly the same semantics**: `delete @("b.x")` ≡ `delete b.x`. `@` is only indirect addressing; it does not change what the operation means.
 >
-> **native interop**: none of the script-layer restrictions above apply to native code. C++ functions of different link modules can reach each other's data through `nload`/`remove`; the data shielding applies to the script layer only.
+> **native interop**: none of the script-layer restrictions above apply to native code. C++ functions of different link modules can reach each other's data through `iload`/`remove`; the data shielding applies to the script layer only.
 
 
 <div style="page-break-after: always;"></div>
@@ -1873,8 +1916,13 @@ m.add(1, 2);  // 3
 
 ```cpp
 struct engine_config {
+    // the product gate — set at creation or with set_etype / set_vtype, read back with config()
+    std::string etype;
+    uint_64 vtype = 0;
+
     // runtime
     bool overflow_check = false;
+    bool debug_enable = false;
     size_t max_stack = 1024;    // 0 = unlimited
     size_t max_vecfill = 0;     // 0 = unlimited
     size_t parse_depth = 1024;
@@ -1892,6 +1940,10 @@ struct engine_config {
     void* pipe_in_ud = nullptr;
     pipe_out pipe_out_ptr = nullptr;
     void* pipe_out_ud = nullptr;
+
+    // host type-naming callback — set with set_type_ex(), read back with config()
+    type_ex type_ex_ptr = nullptr;
+    void* type_ex_ud = nullptr;
 };
 ```
 
@@ -2052,8 +2104,8 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 
 | Method | Description |
 |------|------|
-| `set_etype(s)` / `etype()` | engine type (string), stamped in when an .axp is compiled and always checked before execution |
-| `set_vtype(n)` / `vtype()` | engine version (uint_64), the extension support level, stamped in when an .axp is compiled |
+| `set_etype(s)` | engine type (string), stamped in when an .axp is compiled and always checked before execution; read back as `config().etype` |
+| `set_vtype(n)` | engine version (uint_64), the extension support level, stamped in when an .axp is compiled; read back as `config().vtype` |
 
 ### Control and hooks
 
@@ -2061,7 +2113,7 @@ eng->get_csys().connect([](uint_64 tid, const std::string& s) {
 |------|------|
 | `set_hook(fn, ud, interval)` | the unified resource control hook (a hard firewall): one exec event per interval checkpoints; an import/link event per load request. **Any event returning false is an interrupt** (InterruptedError, uncatchable). fn=null → off; no engine API may be called inside the hook |
 | `set_pipe(in, out, in_ud, out_ud)` | set the IO pipes (the engine never calls them, it only stores the handles for the user to keep and redirect with); null = host default (stdio) |
-| `running()` | cross-thread query: true while an `exec()` is running (an atomic load); `call()` does not count |
+| `running()` | cross-thread query: true while an entry is running — `exec()` or `call()` (an atomic load) |
 | `set_interrupt()` | cross-thread interrupt: sets the interrupt flag, honoured at the next checkpoint (an atomic store) |
 
 ### Signals

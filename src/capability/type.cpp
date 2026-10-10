@@ -37,7 +37,7 @@ namespace capability {
         {"var x = any", R"EX(var a = 1; a = "s"; a = [1]; return a; => [1])EX", nullptr, ""},
         {"var x = any", R"EX(var a = 1; var a = 2; => ![NameError] Name conflict)EX", nullptr, ""},
         {"var x = any", R"EX(var a = 1; delete a; var a = 2; return a; => 2)EX", nullptr, ""},
-        {"var x = any", R"EX(a = 5; => ![NameError] Undefined variable)EX", nullptr, ""},
+        {"var x = any", R"EX(a = 5; => ![NameError] Undefined: a)EX", nullptr, ""},
     };
 #undef ENC
 
